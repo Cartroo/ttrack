@@ -578,7 +578,18 @@ def main(argv):
                     cmdline.append(arg)
             interpreter.onecmd(" ".join(cmdline))
         else:
-            interpreter.cmdloop(BANNER)
+            first_time = True
+            while True:
+                try:
+                    if first_time:
+                        first_time = False
+                        interpreter.cmdloop(BANNER)
+                    else:
+                        interpreter.cmdloop("")
+                    break
+                except KeyboardInterrupt:
+                    print
+                    print "(To quit use the 'exit' command or CTRL+D)"
 
     except ApplicationError, e:
         if logger is not None:
