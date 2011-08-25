@@ -1,5 +1,6 @@
 #!/usr/bin/python
 
+import atexit
 import cmd
 import datetime
 import logging
@@ -17,6 +18,7 @@ import tracklib
 VERSION = "1.0"
 APP_NAME = "TimeTrack"
 BANNER = "\n%s %s\n\nType 'help' to list commands.\n" % (APP_NAME, VERSION)
+HISTORY_FILE = os.path.expanduser("~/.timetrackhistory")
 
 
 
@@ -27,6 +29,10 @@ def get_option_parser():
                                    version="%s %s" % (APP_NAME, VERSION))
     parser.add_option("-d", "--debug", dest="debug", action="store_true",
                       help="enable debug output on stderr")
+    parser.add_option("-H", "--skip-history", dest="skip_history",
+                      action="store_true",
+                      help="don't try to read/write command history")
+    parser.set_defaults(debug=False, skip_history=False)
     return parser
 
 
@@ -566,6 +572,15 @@ def main(argv):
         logger = get_stderr_logger("ttrack", logging.DEBUG)
     else:
         logger = get_stderr_logger("ttrack")
+
+    # If not skipping history, read command history file (if any) and
+    # register an atexit handler to write it on termination.
+    if not options.skip_history:
+        atexit.register(readline.write_history_file, HISTORY_FILE)
+        try:
+            readline.read_history_file(HISTORY_FILE)
+        except IOError:
+            pass
 
     try:
         interpreter = CommandHandler(logger)
