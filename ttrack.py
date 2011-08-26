@@ -427,8 +427,8 @@ stop - stops timer on current task.
 
     def do_summary(self, args):
         """
-summarise (tag|task) (time|switches|diary) (day|week|month)
-          [<period>] [tag <tag>]
+summary (tag|task) (time|switches|diary) (day|week|month)
+        [<period>] [tag <tag>]
 
 Shows various summary information in tabular form. The first argument sets
 whether totals are split by task or tag. The second argument sets whether

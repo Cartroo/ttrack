@@ -2,7 +2,6 @@
 import bisect
 import collections
 from datetime import datetime, timedelta
-import fcntl
 import os
 import sqlite3
 import time
