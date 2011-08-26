@@ -405,19 +405,30 @@ stop - stops timer on current task.
 
 
     def complete_summary(self, text, line, begidx, endidx):
-        if len(shlex.split(line[:begidx])) == 1:
+        items = shlex.split(line[:begidx])
+        if len(items) == 1:
             return self._complete_list(text, ("tag", "task"))
-        elif len(shlex.split(line[:begidx])) == 2:
+        elif len(items) == 2:
             return self._complete_list(text, ("time", "switches", "diary"))
-        elif len(shlex.split(line[:begidx])) == 3:
+        elif len(items) == 3:
             return self._complete_list(text, ("day", "week", "month"))
+        elif len(items) == 4:
+            return self._complete_list(text, ("this", "now", "current", "tag"))
+        elif len(items) == 5:
+            if items[-1] == "tag":
+                return self._complete_tag(text)
+            else:
+                return self._complete_list(text, ("tag",))
+        elif len(items) == 6 and items[-1] == "tag":
+            return self._complete_tag(text)
         else:
             return []
 
 
     def do_summary(self, args):
         """
-summarise (tag|task) (time|switches|diary) (day|week|month) [<period>]
+summarise (tag|task) (time|switches|diary) (day|week|month)
+          [<period>] [tag <tag>]
 
 Shows various summary information in tabular form. The first argument sets
 whether totals are split by task or tag. The second argument sets whether
@@ -426,10 +437,17 @@ The third argument specifies the period over which the results should be
 accumulated and the fourth specifies how many such periods to go back.
 For example, specifying "week" with a <period> of 0 shows the summary for
 the current (partial) week, whereas a <period> of 1 shows the previous week.
+If the <period> is ommitted a value of 0 is assumed. Synonyms like "current"
+are also accepted.
+
+If the optional additional "tag" argument is specified (either in place of
+or after a <period> argument) then it must be followed by the name of a
+tag. This will filter results so that only tasks with the specified tag
+are counted towards the total.
 """
         items = shlex.split(args)
-        if len(items) not in (3, 4):
-            self.logger.error("summary cmd requires 4 arguments")
+        if len(items) not in (3, 4, 5, 6):
+            self.logger.error("summary cmd requires 3-6 arguments")
             return
         if items[0] not in ("tag", "task"):
             self.logger.error("summary cmd takes tag/task as first arg")
@@ -441,14 +459,34 @@ the current (partial) week, whereas a <period> of 1 shows the previous week.
         if items[2] not in ("day", "week", "month"):
             self.logger.error("unsupported period %r for summary cmd", items[3])
             return
+        filter_tag = None
         if len(items) < 4:
             period = 0
         else:
-            try:
-                period = int(items[3])
-            except ValueError:
-                self.logger.error("summary cmd takes int as fourth arg")
-                return
+            if items[3] == "tag":
+                if len(items) < 5:
+                    self.logger.error("no tag specified to filter")
+                    return
+                else:
+                    filter_tag = items[4]
+                    period = 0
+            else:
+                if items[3] in ("this", "now", "current"):
+                    period = 0
+                else:
+                    try:
+                        period = int(items[3])
+                    except ValueError:
+                        self.logger.error("summary cmd takes int as fourth arg")
+                        return
+                if len(items) > 4:
+                    if items[4] != "tag":
+                        self.logger.error("unrecognised arg '%s'", items[4])
+                        return
+                    if len(items) < 6:
+                        self.logger.error("no tag specified to filter")
+                        return
+                    filter_tag = items[5]
 
         if period == 0:
             if items[2] == "day":
@@ -468,8 +506,9 @@ the current (partial) week, whereas a <period> of 1 shows the previous week.
                 summary_obj = tracklib.TagSummaryGenerator()
             else:
                 summary_obj = tracklib.TaskSummaryGenerator()
+            tags_arg = set((filter_tag,)) if filter_tag is not None else None
             tracklib.get_summary_for_period(self.db, summary_obj, items[2],
-                                            period)
+                                            period, tags=tags_arg)
             if items[1] == "time":
                 print "Time spent per %s %s:" % (items[0], period_name)
                 print
