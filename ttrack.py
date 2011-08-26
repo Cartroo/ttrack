@@ -76,14 +76,26 @@ def format_datetime(dt):
 def display_summary(summary_dict, format_func):
     """Displays a summary object as a list."""
 
-    max_item_len = 0
+    max_item_len = len("TOTAL")
+    total = None
     item_strs = []
     for item, value in sorted(summary_dict.items()):
         max_item_len = max(max_item_len, len(item))
-        item_strs.append((item, format_func(value)))
-    for item, value in item_strs:
+        item_strs.append((item, format_func(value), value))
+        if total is None:
+            total = value
+        else:
+            total += value
+    if total is None:
+        print "No activity to summarise.\n"
+        return
+    for item, value, raw in item_strs:
         padding = max_item_len - len(item) + 2
-        print "%s %s %s" % (item, "." * padding, value)
+        percent = int(round((raw * 100.0) / total, 0)) if total else 0
+        print "%s %s [%2d%%] %s" % (item, "." * padding, percent, value)
+    padding = max_item_len - len("TOTAL") + 2
+    if total is not None:
+        print "\nTOTAL %s...... %s\n" % ("." * padding, format_func(total))
 
 
 
@@ -510,16 +522,14 @@ are counted towards the total.
             tracklib.get_summary_for_period(self.db, summary_obj, items[2],
                                             period, tags=tags_arg)
             if items[1] == "time":
-                print "Time spent per %s %s:" % (items[0], period_name)
-                print
+                print "\nTime spent per %s %s:\n" % (items[0], period_name)
                 display_summary(summary_obj.total_time, format_duration)
             elif items[1] == "switches":
-                print "Context switches per %s %s:" % (items[0], period_name)
-                print
+                print "\nContext switches per %s %s:\n" % (items[0],
+                                                           period_name)
                 display_summary(summary_obj.switches, str)
             else:
-                print "Diary entries by %s %s:" % (items[0], period_name)
-                print
+                print "\nDiary entries by %s %s:\n" % (items[0], period_name)
                 display_diary(summary_obj.diary_entries)
         except tracklib.TimeTrackError, e:
             self.logger.error("summary error: %s", e)
