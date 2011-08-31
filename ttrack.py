@@ -159,19 +159,24 @@ class CommandHandler(cmd.Cmd):
     def complete_create(self, text, line, begidx, endidx):
         items = shlex.split(line[:begidx])
         if len(items) == 1:
-            return ["task", "tag"]
+            return self._complete_list(text, ("tag", "task"))
+        elif len(items) > 2 and items[1] == "task":
+            return self._complete_tag(text)
         else:
             return []
 
 
     def do_create(self, args):
         """
-create (task|tag) <name> - create new tag or task.
+create (tag <name> | task <name> [<tag> [...]]) - create new tag or task.
+
+When creating a task, an optional list of one or more tags may be specified
+to apply those tags to the new task without requiring other 'task' commands.
 """
 
         items = shlex.split(args)
-        if len(items) != 2:
-            self.logger.error("create cmd takes two arguments")
+        if len(items) < 2:
+            self.logger.error("create cmd takes at least two arguments")
             return
         if items[0] not in ("task", "tag"):
             self.logger.error("create cmd takes 'task' or 'tag' as first arg")
@@ -179,13 +184,20 @@ create (task|tag) <name> - create new tag or task.
         if not items[1]:
             self.logger.error("name invalid")
             return
+        if items[0] != "task" and len(items) > 2:
+            self.logger.error("may specify tags only when creating tasks")
+            return
 
         try:
             if items[0] == "task":
                 self.db.tasks.add(items[1])
+                print "Created task '%s'" % (items[1],)
+                for tag in items[2:]:
+                    self.db.add_task_tag(items[1], tag)
+                    print "Tagged task '%s' with '%s'" % (items[1], tag)
             elif items[0] == "tag":
                 self.db.tags.add(items[1])
-            print "Created %s '%s'" % (items[0], items[1])
+                print "Created tag '%s'" % (items[1],)
         except tracklib.TimeTrackError, e:
             self.logger.error("create error: %s", e)
 
