@@ -10,6 +10,7 @@ import readline
 import shlex
 import sys
 import textwrap
+import time
 
 
 # Simple date/time parser in case parsedatetime isn't available.
