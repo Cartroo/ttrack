@@ -294,22 +294,55 @@ class TimeTrackDB(object):
             return datetime.fromtimestamp(row[0])
 
 
-    def end_current_task(self):
+    def end_current_task(self, epoch_time=None):
         """Ends the current task, if any."""
+
+        if epoch_time is None:
+            epoch_time = int(time.time())
 
         task = self._get_current_task_with_id()
         if task is not None:
             cur = self.conn.cursor()
             with self.conn:
-                cur.execute("UPDATE tasklog SET end=strftime('%s', 'now')"
-                            " WHERE id=?", (task[0],))
+                cur.execute("UPDATE tasklog SET end=?"
+                            " WHERE id=?", (epoch_time, task[0]))
 
 
-    def start_task(self, task):
+    def get_latest_task_end(self):
+        """Returns datetime of most recent task ending."""
+
+        cur = self.conn.cursor()
+        cur.execute("SELECT MAX(end) FROM tasklog WHERE end IS NOT NULL")
+        row = cur.fetchone()
+        if row is None:
+            return None
+        else:
+            return datetime.fromtimestamp(row[0])
+
+
+    def start_task(self, task, at_datetime=None):
         """Starts a new task, ending any current task in the process."""
+
+        # Work out the time to use as 'now'.
+        if at_datetime is None:
+            at_datetime = datetime.now()
+        epoch_time = time.mktime(at_datetime.timetuple())
 
         # Check current task to see if we need to make any changes.
         cur_task = self._get_current_task_with_id()
+        if cur_task is not None:
+            cur_start = self.get_current_task_start()
+            if at_datetime < cur_start:
+                raise TimeTrackError("can't stop current task at a time"
+                                     " earlier than its start (%s)" %
+                                     (cur_start.isoformat(),))
+        else:
+            latest_end = self.get_latest_task_end()
+            if latest_end is not None and at_datetime < latest_end:
+                raise TimeTrackError("can't start new task at a time"
+                                     " earlier than latest previous task"
+                                     " ended (%s)" % (latest_end.isoformat(),))
+
         if task is None:
             if cur_task is None:
                 # No change
@@ -322,21 +355,21 @@ class TimeTrackDB(object):
             new_task_id = self.tasks.get_id(task)
 
         # Stop current task.
-        self.end_current_task()
+        self.end_current_task(epoch_time)
 
         # If new task specified, start it.
         if new_task_id is not None:
             cur = self.conn.cursor()
             with self.conn:
                 cur.execute("INSERT INTO tasklog (task, start, end)"
-                            " VALUES (?, strftime('%s', 'now'), NULL)",
-                            (new_task_id,))
+                            " VALUES (?, ?, NULL)",
+                            (new_task_id, epoch_time))
 
 
-    def stop_task(self):
+    def stop_task(self, at_datetime=None):
         """Stops the current task."""
 
-        self.start_task(None)
+        self.start_task(None, at_datetime=at_datetime)
 
 
     def get_task_tags(self, task):
@@ -394,18 +427,40 @@ class TimeTrackDB(object):
                         (task_id, tag_id))
 
 
-    def add_diary_entry(self, desc):
+    def get_task_at_time(self, at_datetime):
+        """Return the task name at the specified time."""
+
+        epoch_time = time.mktime(at_datetime.timetuple())
+        cur = self.conn.cursor()
+        cur.execute("SELECT T.name FROM tasklog AS L"
+                    " INNER JOIN tasks AS T ON L.task=T.id"
+                    " WHERE L.start <= ? AND L.end >= ?",
+                    (epoch_time, epoch_time))
+        row = cur.fetchone()
+        if row is None:
+            return None
+        else:
+            return row[0]
+
+
+    def add_diary_entry(self, desc, at_datetime=None):
         """Adds a diary entry to the current task."""
 
-        task = self.get_current_task()
+        # Work out the time to use as 'now'.
+        if at_datetime is None:
+            at_datetime = datetime.now()
+        epoch_time = time.mktime(at_datetime.timetuple())
+
+        # Add entry to appropriate task.
+        task = self.get_task_at_time(at_datetime)
         if task is None:
-            raise TimeTrackError("cannot add diary entry with no current task")
+            raise TimeTrackError("no task active")
         task_id = self.tasks.get_id(task)
         cur = self.conn.cursor()
         with self.conn:
             cur.execute("INSERT INTO diary (task, description, time)"
-                        " VALUES (?, ?, strftime('%s', 'now'))",
-                        (task_id, desc))
+                        " VALUES (?, ?, ?)",
+                        (task_id, desc, epoch_time))
 
 
     def get_task_log_entries(self, start=None, end=None, tags=None, tasks=None):

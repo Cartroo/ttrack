@@ -11,6 +11,23 @@ import shlex
 import sys
 import textwrap
 
+
+# Simple date/time parser in case parsedatetime isn't available.
+class SimpleCalendar(object):
+
+    def parse(self, timestr):
+        try:
+            return (time.strptime(timestr, "%Y-%m-%d %H:%M:%S"), 3)
+        except ValueError:
+            return (time.localtime(), 0)
+
+
+try:
+    from parsedatetime import parsedatetime
+    CALENDAR = parsedatetime.Calendar()
+except ImportError:
+    CALENDAR = SimpleCalendar()
+
 import tracklib
 
 
@@ -39,6 +56,25 @@ def get_option_parser():
 
 class ApplicationError(Exception):
     pass
+
+
+
+def parse_time(logger, timestr):
+    """Convert time string to a datetime and return it.
+
+    If the specification isn't complete, an appropriate error is displayed
+    and None is returned.
+    """
+
+    dt, result = CALENDAR.parse(timestr)
+    if result == 0:
+        logger.error("unable to parse time '%s'", timestr)
+        return None
+    elif result == 1:
+        logger.error("no time specified in '%s'", timestr)
+        return None
+    else:
+        return datetime.datetime(*(dt[:6]))
 
 
 
@@ -369,16 +405,27 @@ show (tasks|tags) - display a list of available tasks or tags.
 
     def do_start(self, args):
         """
-start <task> - starts timer on an already defined task.
+start <task> [<end time>] - starts timer on an already defined task.
+
+If <end time> is specified, the task is started as if that were the current
+time. Most sensible time formats should be accepted if the "parsedatetime"
+module is installed, otherwise it must be in "YYYY-MM-DD hh:mm:ss" format.
 """
 
         items = shlex.split(args)
-        if len(items) != 1:
-            self.logger.error("start cmd takes single argument")
+        if len(items) < 1:
+            self.logger.error("start cmd takes at least one argument")
             return
+        if len(items) > 1:
+            dt = parse_time(self.logger, " ".join(items[1:]))
+            if dt is None:
+                return
+            print "Starting task '%s' at %s" % (items[0], format_datetime(dt))
+        else:
+            dt = None
+            print "Starting task '%s'" % (items[0],)
         try:
-            self.db.start_task(items[0])
-            print "Started task '%s'" % (items[0],)
+            self.db.start_task(items[0], at_datetime=dt)
         except KeyError, e:
             self.logger.error("no such task (%s)" % (e,))
         except tracklib.TimeTrackError, e:
@@ -415,15 +462,23 @@ status - display current task and time spent on it.
 
     def do_stop(self, args):
         """
-stop - stops timer on current task.
-"""
+stop [<end time>]- stops timer on current task.
 
-        if args.strip():
-            self.logger.error("stop cmd takes no arguments")
-            return
+If <end time> is specified, the task is ended as if that were the current
+time. Most sensible time formats should be accepted if the "parsedatetime"
+module is installed, otherwise it must be in "YYYY-MM-DD hh:mm:ss" format.
+"""
         try:
-            print "Stopping task '%s'" % (self.db.get_current_task(),)
-            self.db.stop_task()
+            if args:
+                dt = parse_time(self.logger, args)
+                if dt is None:
+                    return
+                print ("Stopping task '%s' at %s" %
+                       (self.db.get_current_task(), format_datetime(dt)))
+            else:
+                dt = None
+                print "Stopping task '%s'" % (self.db.get_current_task(),)
+            self.db.stop_task(at_datetime=dt)
         except tracklib.TimeTrackError, e:
             self.logger.error("stop error: %s", e)
 
