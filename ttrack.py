@@ -467,7 +467,7 @@ are also accepted.
 If the optional additional "tag" argument is specified (either in place of
 or after a <period> argument) then it must be followed by the name of a
 tag. This will filter results so that only tasks with the specified tag
-are counted towards the total.
+are counted towards the total. This is only valid when summarising by task.
 """
         items = shlex.split(args)
         if len(items) not in (3, 4, 5, 6):
@@ -511,6 +511,10 @@ are counted towards the total.
                         self.logger.error("no tag specified to filter")
                         return
                     filter_tag = items[5]
+        if filter_tag is not None and items[0] != "task":
+            self.logger.error("filtering by tag only valid when summarising"
+                              " by task")
+            return
 
         if period == 0:
             if items[2] == "day":
@@ -526,13 +530,13 @@ are counted towards the total.
             period_name = "%d %ss ago" % (period, items[2])
 
         try:
+            tags_arg = set((filter_tag,)) if filter_tag is not None else None
             if items[0] == "tag":
                 summary_obj = tracklib.TagSummaryGenerator()
             else:
-                summary_obj = tracklib.TaskSummaryGenerator()
-            tags_arg = set((filter_tag,)) if filter_tag is not None else None
+                summary_obj = tracklib.TaskSummaryGenerator(tags=tags_arg)
             tracklib.get_summary_for_period(self.db, summary_obj, items[2],
-                                            period, tags=tags_arg)
+                                            period)
             if items[1] == "time":
                 print "\nTime spent per %s %s:\n" % (items[0], period_name)
                 display_summary(summary_obj.total_time, format_duration)

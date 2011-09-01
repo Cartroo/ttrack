@@ -503,7 +503,8 @@ class SummaryGenerator(object):
 
 class TaskSummaryGenerator(SummaryGenerator):
 
-    def __init__(self):
+    def __init__(self, tags=None):
+        self.filter_tags = tags
         self.total_time = collections.defaultdict(int)
         self.switches = collections.defaultdict(int)
         self.diary_entries = collections.defaultdict(list)
@@ -518,14 +519,23 @@ class TaskSummaryGenerator(SummaryGenerator):
         between consecutive entries.
         """
 
-        self.total_time[entry.task] += entry.duration_secs()
+        # Work out if this was a context switch.
+        context_switch = False
         if self.previous_entry is not None:
             delta = entry.start - self.previous_entry.end
             if delta.days == 0 and abs(delta.seconds) < 60:
                 if self.previous_entry.task != entry.task:
-                    self.switches[entry.task] += 1
-        for diary_entry in entry.diary:
-            bisect.insort(self.diary_entries[entry.task], diary_entry)
+                    context_switch = True
+
+        # If this task belongs to one of our tags (or we're not filtering)
+        # then update entries in appropriate dictionaries.
+        if self.filter_tags is None or self.filter_tags & entry.tags:
+            self.total_time[entry.task] += entry.duration_secs()
+            if context_switch:
+                self.switches[entry.task] += 1
+            for diary_entry in entry.diary:
+                bisect.insort(self.diary_entries[entry.task], diary_entry)
+
         self.previous_entry = entry
 
 
@@ -559,8 +569,7 @@ class TagSummaryGenerator(SummaryGenerator):
         self.previous_entry = entry
 
 
-def get_summary_for_period(db, summary_obj, period, number, tags=None,
-                           tasks=None):
+def get_summary_for_period(db, summary_obj, period, number):
     """Fills the specified summary object with entries from a calendar period.
 
     The db argument should be a TimeTrackDB instance. The summary_obj should
@@ -596,6 +605,5 @@ def get_summary_for_period(db, summary_obj, period, number, tags=None,
         raise TimeTrackError("period %r invalid" % (period,))
 
     # Fill up summary object with correct entries.
-    summary_obj.read_entries(db.get_task_log_entries(start=start, end=end,
-                                                     tags=tags, tasks=tasks))
+    summary_obj.read_entries(db.get_task_log_entries(start=start, end=end))
 
