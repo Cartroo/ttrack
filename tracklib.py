@@ -434,7 +434,8 @@ class TimeTrackDB(object):
         cur = self.conn.cursor()
         cur.execute("SELECT T.name FROM tasklog AS L"
                     " INNER JOIN tasks AS T ON L.task=T.id"
-                    " WHERE L.start <= ? AND L.end >= ?",
+                    " WHERE L.start <= ? AND"
+                    " (L.end IS NULL OR L.end >= ?)",
                     (epoch_time, epoch_time))
         row = cur.fetchone()
         if row is None:
