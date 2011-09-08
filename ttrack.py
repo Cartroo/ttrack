@@ -406,7 +406,9 @@ show (tasks|tags) - display a list of available tasks or tags.
 
     def do_start(self, args):
         """
-start <task> [<end time>] - starts timer on an already defined task.
+start [<task> [<end time>]] - starts timer on an already defined task.
+
+If <task> is not specified, the most recently-created task is started.
 
 If <end time> is specified, the task is started as if that were the current
 time. Most sensible time formats should be accepted if the "parsedatetime"
@@ -415,8 +417,12 @@ module is installed, otherwise it must be in "YYYY-MM-DD hh:mm:ss" format.
 
         items = shlex.split(args)
         if len(items) < 1:
-            self.logger.error("start cmd takes at least one argument")
-            return
+            task = self.db.get_last_created_task()
+            if task is None:
+                self.logger.error("no recently-created task to start")
+                return
+        else:
+            task = items[0]
         if len(items) > 1:
             dt = parse_time(self.logger, " ".join(items[1:]))
             if dt is None:
@@ -424,9 +430,9 @@ module is installed, otherwise it must be in "YYYY-MM-DD hh:mm:ss" format.
             print "Starting task '%s' at %s" % (items[0], format_datetime(dt))
         else:
             dt = None
-            print "Starting task '%s'" % (items[0],)
+            print "Starting task '%s'" % (task,)
         try:
-            self.db.start_task(items[0], at_datetime=dt)
+            self.db.start_task(task, at_datetime=dt)
         except KeyError, e:
             self.logger.error("no such task (%s)" % (e,))
         except tracklib.TimeTrackError, e:

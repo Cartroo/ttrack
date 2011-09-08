@@ -282,6 +282,18 @@ class TimeTrackDB(object):
             return task[1]
 
 
+    def get_last_created_task(self):
+        """Returns the most-recently created task."""
+
+        cur = self.conn.cursor()
+        cur.execute("SELECT name FROM tasks ORDER BY id DESC LIMIT 1")
+        row = cur.fetchone()
+        if row is None:
+            return None
+        else:
+            return row[0]
+
+
     def get_current_task_start(self):
         """Returns the start time of the current task as a local datetime."""
 
