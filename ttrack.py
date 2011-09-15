@@ -155,6 +155,19 @@ def display_diary(diary):
 
 
 
+def display_entries(entries):
+    """Displays log entries by task."""
+
+    rows = [(i.task, format_duration(i.duration_secs()) + " ",
+             format_datetime(i.start)) for i in entries]
+    w = [max(len(row[i]) for row in rows) for i in (0, 1, 2)]
+    fmt_str = "{{0:>{0}}} - {{1:.<{1}}}.. {{2}}".format(*w)
+    for row in rows:
+        print fmt_str.format(*row)
+    print
+
+
+
 class CommandHandler(cmd.Cmd):
 
     def __init__(self, logger):
@@ -541,7 +554,8 @@ module is installed, otherwise it must be in "YYYY-MM-DD hh:mm:ss" format.
         if len(items) == 1:
             return self._complete_list(text, ("tag", "task"))
         elif len(items) == 2:
-            return self._complete_list(text, ("time", "switches", "diary"))
+            return self._complete_list(text, ("time", "switches", "diary",
+                                              "entries"))
         elif len(items) == 3:
             return self._complete_list(text, ("day", "week", "month"))
         elif len(items) == 4:
@@ -559,7 +573,7 @@ module is installed, otherwise it must be in "YYYY-MM-DD hh:mm:ss" format.
 
     def do_summary(self, args):
         """
-summary (tag|task) (time|switches|diary) (day|week|month)
+summary (tag|task) (time|switches|diary|entries) (day|week|month)
         [<period>] [tag <tag>]
 
 Shows various summary information in tabular form. The first argument sets
@@ -584,7 +598,7 @@ are counted towards the total. This is only valid when summarising by task.
         if items[0] not in ("tag", "task"):
             self.logger.error("summary cmd takes tag/task as first arg")
             return
-        if items[1] not in ("time", "switches", "diary"):
+        if items[1] not in ("time", "switches", "diary", "entries"):
             self.logger.error("summary cmd takes time/switches/diary"
                               " as second arg")
             return
@@ -623,6 +637,9 @@ are counted towards the total. This is only valid when summarising by task.
             self.logger.error("filtering by tag only valid when summarising"
                               " by task")
             return
+        if items[1] == "entries" and items[0] != "task":
+            self.logger.error("log entries may only be displayed by task")
+            return
 
         if period == 0:
             if items[2] == "day":
@@ -639,7 +656,9 @@ are counted towards the total. This is only valid when summarising by task.
 
         try:
             tags_arg = set((filter_tag,)) if filter_tag is not None else None
-            if items[0] == "tag":
+            if items[1] == "entries":
+                summary_obj = tracklib.SummaryGenerator()
+            elif items[0] == "tag":
                 summary_obj = tracklib.TagSummaryGenerator()
             else:
                 summary_obj = tracklib.TaskSummaryGenerator(tags=tags_arg)
@@ -652,9 +671,12 @@ are counted towards the total. This is only valid when summarising by task.
                 print "\nContext switches per %s %s:\n" % (items[0],
                                                            period_name)
                 display_summary(summary_obj.switches, str)
-            else:
+            elif items[1] == "diary":
                 print "\nDiary entries by %s %s:\n" % (items[0], period_name)
                 display_diary(summary_obj.diary_entries)
+            else:
+                print "\nLog entries by %s %s:\n" % (items[0], period_name)
+                display_entries(summary_obj.entries)
         except tracklib.TimeTrackError, e:
             self.logger.error("summary error: %s", e)
 

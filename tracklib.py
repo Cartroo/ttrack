@@ -581,6 +581,9 @@ class TimeTrackDB(object):
 
 class SummaryGenerator(object):
 
+    def __init__(self):
+        self.entries = []
+
     def read_entries(self, entries):
         """Read multiple entries."""
 
@@ -591,7 +594,7 @@ class SummaryGenerator(object):
     def read_entry(self, entry):
         """Read a single TaskLogEntry instance."""
 
-        raise NotImplementedError()
+        self.entries.append(entry)
 
 
 
