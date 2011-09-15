@@ -326,10 +326,10 @@ class TimeTrackDB(object):
         cur = self.conn.cursor()
         cur.execute("SELECT MAX(end) FROM tasklog WHERE end IS NOT NULL")
         row = cur.fetchone()
-        if row is None:
+        if row is None or row[0] is None:
             return None
         else:
-            return datetime.fromtimestamp(row[0])
+            return datetime.fromtimestamp(float(row[0]))
 
 
     def start_task(self, task, at_datetime=None):
@@ -403,6 +403,25 @@ class TimeTrackDB(object):
         return task_tags
 
 
+    def get_tag_tasks(self, task):
+        """Returns the set of tasks for a particular tag."""
+
+        # Get tag ID.
+        tag_id = self.tags.get_id(task)
+
+        # Get list of rows in tagmappings for specified tag.
+        cur = self.conn.cursor()
+        cur.execute("SELECT T.name FROM tagmappings AS M"
+                    " INNER JOIN tasks AS T ON M.task=T.id"
+                    " WHERE M.tag=?", (tag_id,))
+
+        # Convert returned list of tasks to set and return it.
+        tag_tasks = set()
+        for row in cur:
+            tag_tasks.add(row[0])
+        return tag_tasks
+
+
     def add_task_tag(self, task, tag):
         """Adds a tag to the specified task."""
 
@@ -459,15 +478,19 @@ class TimeTrackDB(object):
     def add_diary_entry(self, desc, at_datetime=None):
         """Adds a diary entry to the current task."""
 
-        # Work out the time to use as 'now'.
+        # Work out the task active at the specified time.
         if at_datetime is None:
             at_datetime = datetime.now()
-        epoch_time = time.mktime(at_datetime.timetuple())
+            task = self.get_current_task()
+            if task is None:
+                raise TimeTrackError("no task currently active")
+        else:
+            task = self.get_task_at_time(at_datetime)
+            if task is None:
+                raise TimeTrackError("no task active at %r" % (at_datetime,))
 
         # Add entry to appropriate task.
-        task = self.get_task_at_time(at_datetime)
-        if task is None:
-            raise TimeTrackError("no task active")
+        epoch_time = time.mktime(at_datetime.timetuple())
         task_id = self.tasks.get_id(task)
         cur = self.conn.cursor()
         with self.conn:
@@ -497,35 +520,34 @@ class TimeTrackDB(object):
         # Create database cursor for multiple queries below.
         cur = self.conn.cursor()
 
-        # If 'tags' was specified, convert this into a set of tasks.
-        tag_tasks = None
+        filter_tasks = None
+
+        # If 'tags' was specified, convert these into a list of tasks.
         if tags is not None:
-            # This is more efficiently done with SQL's "IN" operator, but
-            # we can't do that and still use parameter substitution for safety.
-            tag_tasks = set()
+            filter_tasks = set()
             for tag in tags:
-                if tag not in self.tags:
-                    raise TimeTrackError("tag %r doesn't exist" % (tag,))
-                cur.execute("SELECT M.task FROM tagmappings AS M"
-                            " INNER JOIN tags AS G ON M.tag=G.id"
-                            " WHERE G.name LIKE ?", (tag,))
-                tag_tasks.update(i[0] for i in cur)
+                try:
+                    filter_tasks.update(self.get_tag_tasks(tag))
+                except KeyError:
+                    raise TimeTrackError("tag not found: '%s'" % (tag,))
 
-        # If tasks were specified then convert these to IDs.
+        # If 'tasks' was specified, merge these in with any from tags.
         if tasks is not None:
+            if filter_tasks is not None:
+                filter_tasks.intersection_update(set(tasks))
+            else:
+                filter_tasks = set(tasks)
+
+        # Convert filter_tasks to task IDs
+        if filter_tasks is not None:
             try:
-                tasks = set(self.tasks.get_id(i) for i in tasks)
+                filter_tasks = set(self.tasks.get_id(i) for i in filter_tasks)
             except KeyError, e:
-                raise TimeTrackError("item not found: %s" % (e,))
-            # Merge with tag_tasks if specified
-            if tag_tasks is not None:
-                tasks.intersection_update(tag_tasks)
+                raise TimeTrackError("task not found: '%s'" % (e,))
 
-        elif tag_tasks is not None:
-            tasks = tag_tasks
-
-        if tasks is not None and not tasks:
-            raise TimeTrackError("no tasks match criteria")
+            if not filter_tasks:
+                # No possible results if filter_tasks is empty.
+                return
 
         # Build WHERE clause.
         where_items = []
@@ -533,9 +555,9 @@ class TimeTrackDB(object):
             where_items.append("(L.end >= %d OR L.end IS NULL)" % (int(start),))
         if end is not None:
             where_items.append("L.start <= %d" % (int(end),))
-        if tasks is not None:
+        if filter_tasks is not None:
             where_items.append("L.task IN (%s)" %
-                               (",".join(str(i) for i in tasks),))
+                               (",".join(str(i) for i in filter_tasks),))
 
         where_clause = ""
         if where_items:
@@ -545,9 +567,13 @@ class TimeTrackDB(object):
                     " INNER JOIN tasks AS T ON L.task=T.id"
                     "%s ORDER BY L.start" % (where_clause,))
         for row in cur:
-            start_time = max(row[1], start)
+            start_time = row[1]
+            if start is not None and start_time < start:
+                start_time = start
             end_time = row[2]
-            if end is not None and end_time is not None and end_time > end:
+            if end_time is None and end is not None:
+                end_time = time.time()
+            if end is not None and end_time > end:
                 end_time = end
             yield TaskLogEntry(self.logger, self, row[0], start_time, end_time)
 

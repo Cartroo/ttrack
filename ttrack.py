@@ -257,6 +257,7 @@ delete (task|tag) <name> - delete and existing tag or task.
 
 WARNING: Deleting a tag will remove it from all tasks. Deleting a
          task will also remove associated diary and log entries.
+         DELETION OF DIARY AND LOG ENTRIES IS PERMANENT - THERE IS NO UNDO!
 """
 
         items = shlex.split(args)
@@ -295,13 +296,6 @@ diary <entry> - add a new diary entry to the current task.
             print "Entry added to task '%s'" % (task,)
         except tracklib.TimeTrackError, e:
             self.logger.error("diary error: %s", e)
-
-
-    def complete_show(self, text, line, begidx, endidx):
-        if line[:begidx].strip() == "show":
-            return self._complete_list(text, ("tasks", "tags"))
-        else:
-            return []
 
 
     def complete_rename(self, text, line, begidx, endidx):
@@ -370,32 +364,83 @@ inactivity, or to resume work on something after an interruption.
             self.logger.error("status error: %s", e)
 
 
+    def complete_show(self, text, line, begidx, endidx):
+        if line[:begidx].strip() == "show":
+            return self._complete_list(text, ("tasks", "tags", "unused"))
+        elif line[:begidx].strip() == "show unused":
+            return self._complete_list(text, ("tasks", "tags"))
+        elif line[:begidx].strip() in ("show tasks", "show unused tasks"):
+            return self._complete_tag(text)
+        else:
+            return []
+
+
     def do_show(self, args):
         """
-show (tasks|tags) - display a list of available tasks or tags.
+show [unused] (tasks [<tag>]|tags) - display a list of available tasks or tags.
+
+The optional 'unused' keyword shows only tasks which haven't been active in
+the past five weeks or tags which have no tasks attached to them. When listing
+tasks, an optional tag may be specified to filter the tasks displayed to just
+those with the tag attached.
 """
 
         items = shlex.split(args)
-        if len(items) != 1:
-            self.logger.error("show cmd takes a single argument")
+        if not 1 <= len(items) <= 3:
+            self.logger.error("show cmd takes 1-3 arguments")
             return
-        if items[0] not in ("tasks", "tags"):
-            self.logger.error("show cmd takes 'tasks' or 'tags' as first arg")
+        if items[0] not in ("tasks", "tags", "unused"):
+            self.logger.error("show cmd takes 'tasks', 'tags' or 'unused' as"
+                              " first arg")
             return
+        filter_tag = None
+        unused = 0
+        if items[0] == "unused":
+            unused = 1
+            if items[1] not in ("tasks", "tags"):
+                self.logger.error("show cmd takes 'tasks' or 'tags' after"
+                                  " 'unused'")
+                return
+        if len(items) == 2 + unused:
+            if items[0 + unused] == "tasks":
+                filter_tag = items[1 + unused]
+                if filter_tag not in self.db.tags:
+                    self.logger.error("no such tag '%s'", filter_tag)
+                    return
+            else:
+                self.logger.error("show cmd only accepts filter tag arg with"
+                                  " 'tasks'")
+                return
 
         try:
-            if items[0] == "tasks":
-                print "Tasks:"
+            if items[0 + unused] == "tasks":
+                active_tasks = set()
+                if unused:
+                    start = datetime.datetime.now() - datetime.timedelta(35)
+                    for entry in self.db.get_task_log_entries(start=start):
+                        active_tasks.add(entry.task)
+                if filter_tag is None:
+                    print "All tasks:"
+                else:
+                    print "Tasks with tag '%s':" % (filter_tag,)
                 for task in self.db.tasks:
+                    if task in active_tasks:
+                        continue
                     tags = self.db.get_task_tags(task)
+                    if filter_tag is not None and filter_tag not in tags:
+                        continue
                     if tags:
                         print "  %s (%s)" % (task, ", ".join(tags))
                     else:
                         print "  %s" % (task,)
             else:
-                print "Tags:"
+                print "All tags:"
                 for tag in self.db.tags:
-                    print "  %s" % (tag,)
+                    tasks = len(self.db.get_tag_tasks(tag))
+                    if unused and tasks > 0:
+                        continue
+                    print "  %s (%d task%s)" % (tag, tasks,
+                                                "" if tasks==1 else "s")
         except tracklib.TimeTrackError, e:
             self.logger.error("show error: %s", e)
 

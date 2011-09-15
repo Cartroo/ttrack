@@ -365,6 +365,10 @@ class TestTimeTrackDB(unittest2.TestCase):
         self.assertEqual(set(self.db.get_task_tags("task2")), set(("tag2",)))
         self.assertEqual(set(self.db.get_task_tags("task1+2")),
                          set(("tag1", "tag2")))
+        self.assertEqual(set(self.db.get_tag_tasks("tag1")),
+                         set(("task1", "task1+2")))
+        self.assertEqual(set(self.db.get_tag_tasks("tag2")),
+                         set(("task2", "task1+2")))
 
 
     def test_remove_task_tags(self):
@@ -382,6 +386,9 @@ class TestTimeTrackDB(unittest2.TestCase):
         self.assertEqual(set(self.db.get_task_tags("task1")), set())
         self.assertEqual(set(self.db.get_task_tags("task2")), set(("tag2",)))
         self.assertEqual(set(self.db.get_task_tags("task1+2")), set(("tag2",)))
+        self.assertEqual(set(self.db.get_tag_tasks("tag1")), set())
+        self.assertEqual(set(self.db.get_tag_tasks("tag2")),
+                         set(("task2", "task1+2")))
 
 
     def test_add_diary_entry(self):
@@ -442,19 +449,19 @@ class TestTimeTrackDB(unittest2.TestCase):
         cur.execute("INSERT INTO tagmappings (task, tag) VALUES (7, 1)")
         cur.execute("INSERT INTO tagmappings (task, tag) VALUES (7, 2)")
         cur.execute("INSERT INTO tagmappings (task, tag) VALUES (7, 4)")
-        # evA: 2011-01-01 10:00:00 - START task1
-        # evB: 2011-01-01 10:30:00 - START task2
+        # evA: 2011-01-01 10:00:00 - START task1    [00h 30m]
+        # evB: 2011-01-01 10:30:00 - START task2    [01h 30m]
         # evC: 2011-01-01 10:35:00 - DIARY one
-        # evD: 2011-01-01 12:00:00 - START task1
+        # evD: 2011-01-01 12:00:00 - START task1    [04h 00m]
         # evE: 2011-01-01 13:00:00 - DIARY two
         # evF: 2011-01-01 13:30:00 - DIARY three
         # evG: 2011-01-01 16:00:00 - STOP task1
-        # evH: 2011-01-02 10:00:00 - START task3
+        # evH: 2011-01-02 10:00:00 - START task3    [24h 00m]
         # evI: 2011-01-02 12:00:00 - DIARY four
-        # evJ: 2011-01-03 10:00:00 - START task4
-        # evK: 2011-01-03 11:00:00 - START task5
-        # evL: 2011-01-03 12:00:00 - START task6
-        # evM: 2011-01-03 13:00:00 - START task7
+        # evJ: 2011-01-03 10:00:00 - START task4    [01h 00m]
+        # evK: 2011-01-03 11:00:00 - START task5    [01h 00m]
+        # evL: 2011-01-03 12:00:00 - START task6    [01h 00m]
+        # evM: 2011-01-03 13:00:00 - START task7    [inf.   ]
         # (task7 is left running as the current task)
         evA, evB = (self._get_ts(1, 10, 0, 0), self._get_ts(1, 10, 30, 0))
         evC, evD = (self._get_ts(1, 10, 35, 0), self._get_ts(1, 12, 0, 0))
