@@ -413,6 +413,7 @@ those with the tag attached.
                 return
 
         try:
+            spec = "Unused" if unused else "All"
             if items[0 + unused] == "tasks":
                 active_tasks = set()
                 if unused:
@@ -420,9 +421,9 @@ those with the tag attached.
                     for entry in self.db.get_task_log_entries(start=start):
                         active_tasks.add(entry.task)
                 if filter_tag is None:
-                    print "All tasks:"
+                    print "%s tasks:" % (spec,)
                 else:
-                    print "Tasks with tag '%s':" % (filter_tag,)
+                    print "%s tasks with tag '%s':" % (spec, filter_tag)
                 for task in self.db.tasks:
                     if task in active_tasks:
                         continue
@@ -434,7 +435,7 @@ those with the tag attached.
                     else:
                         print "  %s" % (task,)
             else:
-                print "All tags:"
+                print "%s tags:" % (spec,)
                 for tag in self.db.tags:
                     tasks = len(self.db.get_tag_tasks(tag))
                     if unused and tasks > 0:
