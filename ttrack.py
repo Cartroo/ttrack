@@ -4,6 +4,7 @@ import atexit
 import cmd
 import datetime
 import logging
+import operator
 import optparse
 import os
 import readline
@@ -126,7 +127,8 @@ def display_summary(summary_dict, format_func):
     if total is None:
         print "No activity to summarise.\n"
         return
-    for item, value, raw in item_strs:
+    for item, value, raw in sorted(item_strs, key=operator.itemgetter(2),
+                                   reverse=True):
         padding = max_item_len - len(item) + 2
         percent = int(round((raw * 100.0) / total, 0)) if total else 0
         print "%s %s [%2d%%] %s" % (item, "." * padding, percent, value)
@@ -658,12 +660,19 @@ are counted towards the total. This is only valid when summarising by task.
             tags_arg = set((filter_tag,)) if filter_tag is not None else None
             if items[1] == "entries":
                 summary_obj = tracklib.SummaryGenerator()
-            elif items[0] == "tag":
-                summary_obj = tracklib.TagSummaryGenerator()
+                tracklib.get_summary_for_period(self.db, summary_obj, items[2],
+                                                period, tags=tags_arg)
             else:
-                summary_obj = tracklib.TaskSummaryGenerator(tags=tags_arg)
-            tracklib.get_summary_for_period(self.db, summary_obj, items[2],
-                                            period)
+                if items[0] == "tag":
+                    summary_obj = tracklib.TagSummaryGenerator()
+                else:
+                    # We can't supply the tags_arg to get_summary_for_period(),
+                    # or the context switches will be wrong in the summary
+                    # object # (since we'll fail to consider switches from or
+                    # to tasks # outside our tag filter set).
+                    summary_obj = tracklib.TaskSummaryGenerator(tags=tags_arg)
+                tracklib.get_summary_for_period(self.db, summary_obj, items[2],
+                                                period)
             if items[1] == "time":
                 print "\nTime spent per %s %s:\n" % (items[0], period_name)
                 display_summary(summary_obj.total_time, format_duration)

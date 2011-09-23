@@ -666,7 +666,7 @@ class TagSummaryGenerator(SummaryGenerator):
         self.previous_entry = entry
 
 
-def get_summary_for_period(db, summary_obj, period, number):
+def get_summary_for_period(db, summary_obj, period, number, tags=None):
     """Fills the specified summary object with entries from a calendar period.
 
     The db argument should be a TimeTrackDB instance. The summary_obj should
@@ -702,5 +702,6 @@ def get_summary_for_period(db, summary_obj, period, number):
         raise TimeTrackError("period %r invalid" % (period,))
 
     # Fill up summary object with correct entries.
-    summary_obj.read_entries(db.get_task_log_entries(start=start, end=end))
+    summary_obj.read_entries(db.get_task_log_entries(start=start, end=end,
+                                                     tags=tags))
 
