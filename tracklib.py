@@ -148,21 +148,98 @@ def create_tracklib_schema(logger, conn):
 
 
 class TaskLogEntry(object):
+    """Reresents a single task entry.
 
-    def __init__(self, logger, db, task, start, end):
+    Most attributes are read-only (although this is not enforced), but the
+    start and end attributes may be modified and this causes the database to
+    be updated. The exception to this is if the mutable_times parameter
+    is set to False, which makes start and end read-only. This is typically
+    done for TaskLogEntry instances returned from get_task_log_entries()
+    because the times may be truncated to fit the search range in that case.
+    """
+
+    def __init__(self, logger, db, task, entry_id, start, end,
+                 mutable_times=True):
         self.diary = []
         self.tags = set()
-        self.start = datetime.fromtimestamp(start)
-        self.end = datetime.fromtimestamp(end) if end is not None else None
         self.task = task
+        self.entry_id = entry_id
+        self.db = db
+        self.mutable_times = mutable_times
+
+        self._start = datetime.fromtimestamp(start)
+        self._end = datetime.fromtimestamp(end) if end is not None else None
 
         cur = db.conn.cursor()
         self.get_diary_entries(logger, cur, task, start, end)
         self.get_tags(logger, cur, task)
 
 
+    @property
+    def start(self):
+        """Time at which event starts as a datetime instance."""
+        return self._start
+
+
+    @start.setter
+    def start(self, value):
+        if not self.mutable_times:
+            raise AttributeError("times not mutable on this TaskLogEntry")
+        new_epoch_time = time.mktime(value.timetuple())
+        cur = self.db.conn.cursor()
+        cur.execute("SELECT end FROM tasklog WHERE id=?", (self.entry_id,))
+        row = cur.fetchone()
+        if row is not None and row[0] < new_epoch_time:
+            raise TimeTrackError("can't move start time to after end of"
+                                 " same task (%s)" %
+                                 (datetime.fromtimestamp(row[0]).isoformat(),))
+        cur.execute("SELECT end FROM tasklog"
+                    " WHERE end <= (SELECT start FROM tasklog WHERE id=?)"
+                    " ORDER BY end DESC LIMIT 1", (self.entry_id,))
+        row = cur.fetchone()
+        if row is not None and row[0] > new_epoch_time:
+            raise TimeTrackError("can't move start time to before end of"
+                                 " previous task (%s)" %
+                                 (datetime.fromtimestamp(row[0]).isoformat(),))
+        cur.execute("UPDATE tasklog SET start=? WHERE id=?",
+                    (new_epoch_time, self.entry_id))
+        self._start = value
+
+
+    @property
+    def end(self):
+        """Time at which event ends as a datetime instance."""
+        return self._end
+
+
+    @end.setter
+    def end(self, value):
+        if not self.mutable_times:
+            raise AttributeError("times not mutable on this TaskLogEntry")
+        new_epoch_time = time.mktime(value.timetuple())
+        cur = self.db.conn.cursor()
+        cur.execute("SELECT start FROM tasklog WHERE id=?", (self.entry_id,))
+        row = cur.fetchone()
+        if row is not None and row[0] > new_epoch_time:
+            raise TimeTrackError("can't move end time to before start of"
+                                 " same task (%s)" %
+                                 (datetime.fromtimestamp(row[0]).isoformat(),))
+        cur.execute("SELECT start FROM tasklog"
+                    " WHERE start >= (SELECT end FROM tasklog WHERE id=?)"
+                    " ORDER BY start LIMIT 1", (self.entry_id,))
+        row = cur.fetchone()
+        if row is not None and row[0] < new_epoch_time:
+            raise TimeTrackError("can't move end time to after start of"
+                                 " following task (%s)" %
+                                 (datetime.fromtimestamp(row[0]).isoformat(),))
+        cur.execute("UPDATE tasklog SET end=? WHERE id=?",
+                    (new_epoch_time, self.entry_id))
+        self._end = value
+
+
     def __repr__(self):
-        return "TaskLogEntry(%r, %r, %r)" % (self.task, self.start, self.end)
+        return "TaskLogEntry(%r, %r, %r, %r)" % (self.task, self.entry_id,
+                                                 self.start, self.end)
 
 
     def duration_secs(self):
@@ -384,6 +461,20 @@ class TimeTrackDB(object):
         self.start_task(None, at_datetime=at_datetime)
 
 
+    def get_entry_from_id(self, entry_id):
+        """Returns a TaskLogEntry for the specified entry ID."""
+
+        cur = self.conn.cursor()
+        cur.execute("SELECT T.name, L.start, L.end FROM tasklog AS L"
+                    " INNER JOIN tasks AS T ON L.task=T.id WHERE L.id=?",
+                    (int(entry_id),))
+        row = cur.fetchone()
+        if row is None:
+            raise KeyError(entry_id)
+        end = row[2] if row[2] is not None else time.time()
+        return TaskLogEntry(self.logger, self, row[0], entry_id, row[1], end)
+
+
     def get_task_tags(self, task):
         """Returns the set of tags for a particular task."""
 
@@ -563,19 +654,22 @@ class TimeTrackDB(object):
         if where_items:
             where_clause = " WHERE %s" % (" AND ".join(where_items),)
 
-        cur.execute("SELECT T.name, L.start, L.end FROM tasklog AS L"
+        cur.execute("SELECT T.name, L.id, L.start, L.end FROM tasklog AS L"
                     " INNER JOIN tasks AS T ON L.task=T.id"
                     "%s ORDER BY L.start" % (where_clause,))
         for row in cur:
-            start_time = row[1]
+            start_time = row[2]
             if start is not None and start_time < start:
                 start_time = start
-            end_time = row[2]
+            end_time = row[3]
             if end_time is None and end is not None:
                 end_time = time.time()
             if end is not None and end_time > end:
                 end_time = end
-            yield TaskLogEntry(self.logger, self, row[0], start_time, end_time)
+            # We don't allow start and end to be mutable because of the way
+            # we truncate them to the requested range.
+            yield TaskLogEntry(self.logger, self, row[0], row[1],
+                               start_time, end_time, mutable_times=False)
 
 
 

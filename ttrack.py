@@ -17,7 +17,7 @@ import time
 # Simple date/time parser in case parsedatetime isn't available.
 class SimpleCalendar(object):
 
-    def parse(self, timestr):
+    def parse(self, timestr, sourceTime=None):
         try:
             return (time.strptime(timestr, "%Y-%m-%d %H:%M:%S"), 3)
         except ValueError:
@@ -61,14 +61,14 @@ class ApplicationError(Exception):
 
 
 
-def parse_time(logger, timestr):
+def parse_time(logger, timestr, sourceTime=None):
     """Convert time string to a datetime and return it.
 
     If the specification isn't complete, an appropriate error is displayed
     and None is returned.
     """
 
-    dt, result = CALENDAR.parse(timestr)
+    dt, result = CALENDAR.parse(timestr, sourceTime=sourceTime)
     if result == 0:
         logger.error("unable to parse time '%s'", timestr)
         return None
@@ -163,10 +163,10 @@ def display_entries(entries, long_only=False):
     filter_func = lambda x: True
     if long_only:
         filter_func = lambda x: (i.duration_secs() >= 3600*4)
-    rows = [(i.task, format_duration(i.duration_secs()) + " ",
+    rows = [(str(i.entry_id), i.task, format_duration(i.duration_secs()) + " ",
              format_datetime(i.start)) for i in entries if filter_func(i)]
     w = [max(len(row[i]) for row in rows) for i in (0, 1, 2)]
-    fmt_str = "{{0:>{0}}} - {{1:.<{1}}}.. {{2}}".format(*w)
+    fmt_str = "[{{0:>{0}}}] {{1:>{1}}} - {{2:.<{2}}}.. {{3}}".format(*w)
     for row in rows:
         print fmt_str.format(*row)
     print
@@ -729,6 +729,56 @@ task <task> (tag|untag) <tag> - adds or removes a tag from a task.
             self.logger.error("no such tag/task (%s)", e)
         except tracklib.TimeTrackError, e:
             self.logger.error("tag error: %s", e)
+
+
+    def complete_entry(self, text, line, begidx, endidx):
+        items = shlex.split(line[:begidx])
+        if len(items) == 2:
+            return self._complete_list(text, ("start", "end"))
+        else:
+            return []
+
+
+    def do_entry(self, args):
+        """
+entry <id> (start|end) <time> - updates start/end time of specified entry.
+
+Most sensible formats for <time> should be accepted if the "parsedatetime"
+module is installed, otherwise it must be in "YYYY-MM-DD hh:mm:ss" format.
+To obtain the numeric IDs of log entries use "summary task entries [...]".
+"""
+        items = shlex.split(args)
+        if len(items) < 3:
+            self.logger.error("entry cmd takes at least three arguments")
+            return
+        if items[1] not in ("start", "end"):
+            self.logger.error("entry cmd takes start/end as second argument")
+            return
+        try:
+            try:
+                entry = self.db.get_entry_from_id(int(items[0]))
+                old_time = entry.start if items[1] == "starts" else entry.end
+                # If "old_time" is None, the current time is used
+                dt = parse_time(self.logger, " ".join(items[2:]),
+                                sourceTime=old_time)
+                if dt is None:
+                    # Error message has already been printed.
+                    return
+                print ("setting entry %s for task %s %s time to %s" %
+                       (entry.entry_id, entry.task, items[1],
+                        dt.strftime("%Y-%m-%d %H:%M:%S")))
+                if items[1] == "start":
+                    entry.start = dt
+                else:
+                    entry.end = dt
+            except ValueError:
+                self.logger.error("entry ID must be an integer")
+                return
+            except KeyError:
+                self.logger.error("entry %r doesn't exist" % (items[0],))
+                return
+        except tracklib.TimeTrackError, e:
+            self.logger.error("entry error: %s", e)
 
 
     def do_exit(self, args):
