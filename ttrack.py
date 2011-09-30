@@ -165,6 +165,10 @@ def display_entries(entries, long_only=False):
         filter_func = lambda x: (i.duration_secs() >= 3600*4)
     rows = [(str(i.entry_id), i.task, format_duration(i.duration_secs()) + " ",
              format_datetime(i.start)) for i in entries if filter_func(i)]
+    if not rows:
+        print "No entries."
+        print
+        return
     w = [max(len(row[i]) for row in rows) for i in (0, 1, 2)]
     fmt_str = "[{{0:>{0}}}] {{1:>{1}}} - {{2:.<{2}}}.. {{3}}".format(*w)
     for row in rows:
