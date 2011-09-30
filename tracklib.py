@@ -201,8 +201,9 @@ class TaskLogEntry(object):
             raise TimeTrackError("can't move start time to before end of"
                                  " previous task (%s)" %
                                  (datetime.fromtimestamp(row[0]).isoformat(),))
-        cur.execute("UPDATE tasklog SET start=? WHERE id=?",
-                    (new_epoch_time, self.entry_id))
+        with self.db.conn:
+            cur.execute("UPDATE tasklog SET start=? WHERE id=?",
+                        (new_epoch_time, self.entry_id))
         self._start = value
 
 
@@ -232,8 +233,9 @@ class TaskLogEntry(object):
             raise TimeTrackError("can't move end time to after start of"
                                  " following task (%s)" %
                                  (datetime.fromtimestamp(row[0]).isoformat(),))
-        cur.execute("UPDATE tasklog SET end=? WHERE id=?",
-                    (new_epoch_time, self.entry_id))
+        with self.db.conn:
+            cur.execute("UPDATE tasklog SET end=? WHERE id=?",
+                        (new_epoch_time, self.entry_id))
         self._end = value
 
 
