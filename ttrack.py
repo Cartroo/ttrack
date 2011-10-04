@@ -105,7 +105,9 @@ def format_datetime(dt):
     if now.date() == dt.date():
         return dt.strftime("%H:%M")
     elif (now - dt).days < 5:
-        return dt.strftime("%a %H:%M")
+        return dt.strftime("%a %d %H:%M")
+    elif now.year == dt.year:
+        return dt.strftime("%a %b %d %H:%M")
     else:
         return dt.strftime("%a %b %d %H:%M %Y")
 
