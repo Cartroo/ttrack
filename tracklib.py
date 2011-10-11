@@ -189,10 +189,13 @@ class TaskLogEntry(object):
         cur = self.db.conn.cursor()
         cur.execute("SELECT end FROM tasklog WHERE id=?", (self.entry_id,))
         row = cur.fetchone()
-        if row is not None and row[0] < new_epoch_time:
+        if row is None:
+            raise TimeTrackError("can't find entry %r" % (self.entry_id,))
+        end = time.time() if row[0] is None else row[0]
+        if end < new_epoch_time:
             raise TimeTrackError("can't move start time to after end of"
                                  " same task (%s)" %
-                                 (datetime.fromtimestamp(row[0]).isoformat(),))
+                                 (datetime.fromtimestamp(end).isoformat(),))
         cur.execute("SELECT end FROM tasklog"
                     " WHERE end <= (SELECT start FROM tasklog WHERE id=?)"
                     " ORDER BY end DESC LIMIT 1", (self.entry_id,))
