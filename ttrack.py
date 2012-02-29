@@ -190,8 +190,8 @@ class CommandHandler(cmd.Cmd):
         self.prompt = "TimeTrack>>> "
 
 
-    def _complete_task(self, text):
-        return [i for i in self.db.tasks if i.startswith(text)]
+    def _complete_task(self, text, extra=()):
+        return [i for i in self.db.tasks | set(extra) if i.startswith(text)]
 
 
     def _complete_tag(self, text):
@@ -693,7 +693,8 @@ are counted towards the total. This is only valid when summarising by task.
                                                                period_name)
                     display_summary(summary_obj.switches, str)
                 elif items[1] == "diary":
-                    print "\nDiary entries by %s %s:\n" % (items[0], period_name)
+                    print "\nDiary entries by %s %s:\n" % (items[0],
+                                                           period_name)
                     display_diary(summary_obj.diary_entries)
                 else:
                     assert False, "Invalid summary type: %r" % (items[1],)
@@ -702,11 +703,12 @@ are counted towards the total. This is only valid when summarising by task.
 
 
     def complete_task(self, text, line, begidx, endidx):
-        if len(shlex.split(line[:begidx])) == 1:
-            return self._complete_task(text)
-        elif len(shlex.split(line[:begidx])) == 2:
+        items = shlex.split(line[:begidx])
+        if len(items) == 1:
+            return self._complete_task(text, ("current",))
+        elif len(items) == 2:
             return self._complete_list(text, ("tag", "untag"))
-        elif len(shlex.split(line[:begidx])) == 3:
+        elif len(items) == 3 and items[2] in ("tag", "untag"):
             return self._complete_tag(text)
         else:
             return []
@@ -714,27 +716,60 @@ are counted towards the total. This is only valid when summarising by task.
 
     def do_task(self, args):
         """
-task <task> (tag|untag) <tag> - adds or removes a tag from a task.
+task <task> ( (tag|untag) <tag> | diary ) - changes task tags or displays diary.
+
+<task> may either be a task name or "current" for the currently active task.
+
+When called with either the "tag" or "untag" argument, this commands expects
+the name of a tag as the next argument and adds or removes that tag from the
+specified task as appropriate. When called with the "diary" argument, no
+further arguments are accepted and the command displays the full diary for
+the specified task.
 """
 
         items = shlex.split(args)
-        if len(items) != 3:
-            self.logger.error("task cmd takes three arguments")
+        if not 1 < len(items) < 4:
+            self.logger.error("task cmd takes two or three arguments")
             return
-        if items[1] not in ("tag", "untag"):
-            self.logger.error("task cmd takes tag/untag as second argument")
-            return
-        try:
-            if items[1] == "tag":
-                self.db.add_task_tag(items[0], items[2])
-                print "Tagged task '%s' with '%s'" % (items[0], items[2])
-            else:
-                self.db.remove_task_tag(items[0], items[2])
-                print "Removed tag '%s' from task '%s'" % (items[2], items[0])
-        except KeyError, e:
-            self.logger.error("no such tag/task (%s)", e)
-        except tracklib.TimeTrackError, e:
-            self.logger.error("tag error: %s", e)
+
+        # Work out task name.
+        if items[0] == "current":
+            task = self.db.get_current_task()
+            if task is None:
+                self.logger.error("no current task")
+                return
+        else:
+            task = items[0]
+
+        if items[1] == "diary":
+
+            if len(items) != 2:
+                self.logger.error("task cmd with diary takes no more args")
+                return
+            summary_obj = tracklib.TaskSummaryGenerator()
+            entry_gen = self.db.get_task_log_entries(tasks=(task,))
+            summary_obj.read_entries(entry_gen)
+            display_diary(summary_obj.diary_entries)
+
+        else:
+
+            if items[1] not in ("tag", "untag"):
+                self.logger.error("task cmd takes tag/untag/diary as 2nd arg")
+                return
+            if len(items) != 3:
+                self.logger.error("task cmd with tag/untag needs 3rd arg")
+                return
+            try:
+                if items[1] == "tag":
+                    self.db.add_task_tag(items[0], items[2])
+                    print "Added tag '%s' to '%s'" % (items[2], items[0])
+                else:
+                    self.db.remove_task_tag(items[0], items[2])
+                    print "Removed tag '%s' from '%s'" % (items[2], items[0])
+            except KeyError, e:
+                self.logger.error("no such tag/task (%s)", e)
+            except tracklib.TimeTrackError, e:
+                self.logger.error("tag error: %s", e)
 
 
     def complete_entry(self, text, line, begidx, endidx):
