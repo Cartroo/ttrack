@@ -191,7 +191,8 @@ class CommandHandler(cmd.Cmd):
 
 
     def _complete_task(self, text, extra=()):
-        return [i for i in self.db.tasks | set(extra) if i.startswith(text)]
+        return [i for i in set(self.db.tasks) | set(extra)
+                if i.startswith(text)]
 
 
     def _complete_tag(self, text):
@@ -707,7 +708,7 @@ are counted towards the total. This is only valid when summarising by task.
         if len(items) == 1:
             return self._complete_task(text, ("current",))
         elif len(items) == 2:
-            return self._complete_list(text, ("tag", "untag"))
+            return self._complete_list(text, ("tag", "untag", "diary"))
         elif len(items) == 3 and items[2] in ("tag", "untag"):
             return self._complete_tag(text)
         else:
