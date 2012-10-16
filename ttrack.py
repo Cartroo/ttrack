@@ -60,6 +60,21 @@ class ApplicationError(Exception):
     pass
 
 
+def multiline_input(prompt):
+    """Input multi-line strings without leaving them in history."""
+
+    block = ""
+    old_hist_len = readline.get_current_history_length()
+    while True:
+        line = raw_input(prompt)
+        if line.strip() == ".":
+            break
+        block += line + "\n"
+    for i in xrange(readline.get_current_history_length(), old_hist_len, -1):
+        readline.remove_history_item(i - 1)
+    return block
+
+
 
 def parse_time(logger, timestr, sourceTime=None):
     """Convert time string to a datetime and return it.
@@ -144,6 +159,8 @@ def display_diary(diary):
     """Displays list of diary entries by task."""
 
     print
+    wrapper = textwrap.TextWrapper(initial_indent="| | ",
+                                   subsequent_indent="| | ")
     for name, entries in diary.items():
         if not entries:
             continue
@@ -152,8 +169,17 @@ def display_diary(diary):
         for entry_time, entry_task, entry_desc in entries:
             date_str = format_datetime(entry_time)
             print "| +---- %s ----[ %s ]----" % (date_str, entry_task)
-            print textwrap.fill(entry_desc, initial_indent="| | ",
-                                subsequent_indent="| | ")
+            seen_text = False
+            para_break = False
+            for line in entry_desc.split("\n"):
+                if line:
+                    if para_break:
+                        print "| |"
+                        para_break = False
+                    print wrapper.fill(line)
+                    seen_text = True
+                elif seen_text:
+                    para_break = True
             print "|"
         print
 
@@ -187,7 +213,7 @@ class CommandHandler(cmd.Cmd):
         readline.set_completer_delims(" \t\n")
         cmd.Cmd.__init__(self)
         self.identchars += "-"
-        self.prompt = "TimeTrack>>> "
+        self.prompt = "ttrack>>> "
 
 
     def _complete_task(self, text, extra=()):
@@ -308,15 +334,28 @@ WARNING: Deleting a tag will remove it from all tasks. Deleting a
 diary <entry> - add a new diary entry to the current task.
 """
 
-        args = args.strip()
-        if not args:
-            self.logger.error("diary cmd requires entry as argument")
-
+        # Check for current task before user enters a possibly long diary
+        # entry (there is a race condition here if another process stops
+        # the current task before the diary entry is entered, but users
+        # aren't expected to have multiple instances open on the same DB
+        # and the error should be caught by the underlying layer).
         try:
             task = self.db.get_current_task()
             if task is None:
                 self.logger.error("no current task to add diary entry")
                 return
+        except tracklib.TimeTrackError, e:
+            self.logger.error("diary error: %s", e)
+
+        args = args.strip()
+        if not args:
+            print "Enter diary entry, finish with a '.' on a line by itself."
+            args = multiline_input("diary> ")
+        if not args:
+            self.logger.error("empty entry specified in diary command")
+            return
+
+        try:
             self.db.add_diary_entry(args)
             print "Entry added to task '%s'" % (task,)
         except tracklib.TimeTrackError, e:
