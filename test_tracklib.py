@@ -413,6 +413,88 @@ class TestTimeTrackDB(unittest2.TestCase):
             self.db.add_diary_entry("entry1")
 
 
+    def test_add_todo(self):
+        self.db.tasks.add("task1")
+        entry_time = time.time()
+        self.db.add_task_todo("task1", "Test todo A for task1")
+        cur = self.db.conn.cursor()
+        cur.execute("SELECT task, description, added, done FROM todos")
+        entries = list(cur)
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0][0], self.db.tasks.get_id("task1"))
+        self.assertEqual(entries[0][1], "Test todo A for task1")
+        self.assertAlmostEqual(entries[0][2], entry_time, delta=1)
+        self.assertEqual(entries[0][3], 0)
+
+
+    def test_mark_todo_done(self):
+        self.db.tasks.add("task1")
+        entry_time = time.time()
+        self.db.add_task_todo("task1", "Test todo A for task1")
+        done_time = time.time()
+        self.db.mark_todo_done("task1", "Test todo A for task1")
+        cur = self.db.conn.cursor()
+        cur.execute("SELECT task, description, added, done FROM todos")
+        entries = list(cur)
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0][0], self.db.tasks.get_id("task1"))
+        self.assertEqual(entries[0][1], "Test todo A for task1")
+        self.assertAlmostEqual(entries[0][2], entry_time, delta=1)
+        self.assertAlmostEqual(entries[0][3], done_time, delta=1)
+
+
+    def test_mark_todo_done_unique_prefix(self):
+        self.db.tasks.add("task1")
+        self.db.add_task_todo("task1", "Test todo A for task1")
+        self.db.add_task_todo("task1", "Test todo B for task1")
+        done_time = time.time()
+        self.db.mark_todo_done("task1", "Test todo A")
+        cur = self.db.conn.cursor()
+        cur.execute("SELECT task, description, done FROM todos")
+        entries = sorted(list(cur))
+        self.assertEqual(len(entries), 2)
+        self.assertEqual(entries[0][0], self.db.tasks.get_id("task1"))
+        self.assertEqual(entries[0][1], "Test todo A for task1")
+        self.assertAlmostEqual(entries[0][2], done_time, delta=1)
+        self.assertEqual(entries[1][0], self.db.tasks.get_id("task1"))
+        self.assertEqual(entries[1][1], "Test todo B for task1")
+        self.assertAlmostEqual(entries[1][2], 0)
+
+
+    def test_mark_todo_done_no_task(self):
+        self.db.tasks.add("task1")
+        self.db.add_task_todo("task1", "Test todo A for task1")
+        with self.assertRaises(tracklib.TimeTrackError):
+            self.db.mark_todo_done("taskX", "Test todo")
+
+
+    def test_mark_todo_done_ambiguous_prefix(self):
+        self.db.tasks.add("task1")
+        self.db.add_task_todo("task1", "Test todo A for task1")
+        self.db.add_task_todo("task1", "Test todo B for task1")
+        with self.assertRaises(tracklib.TimeTrackError):
+            self.db.mark_todo_done("task1", "Test todo")
+
+
+    def test_mark_todo_done_unique_within_task_prefix(self):
+        self.db.tasks.add("task1")
+        self.db.tasks.add("task2")
+        self.db.add_task_todo("task1", "Test todo A for task1")
+        self.db.add_task_todo("task2", "Test todo A for task2")
+        done_time = time.time()
+        self.db.mark_todo_done("task1", "Test")
+        cur = self.db.conn.cursor()
+        cur.execute("SELECT task, description, done FROM todos")
+        entries = sorted(list(cur))
+        self.assertEqual(len(entries), 2)
+        self.assertEqual(entries[0][0], self.db.tasks.get_id("task1"))
+        self.assertEqual(entries[0][1], "Test todo A for task1")
+        self.assertAlmostEqual(entries[0][2], done_time, delta=1)
+        self.assertEqual(entries[1][0], self.db.tasks.get_id("task2"))
+        self.assertEqual(entries[1][1], "Test todo A for task2")
+        self.assertAlmostEqual(entries[1][2], 0)
+
+
     def _get_ts(self, day, hour, minute, second):
         return time.mktime(datetime.datetime(2011, 1, day, hour, minute,
                                              second).timetuple())
@@ -451,7 +533,9 @@ class TestTimeTrackDB(unittest2.TestCase):
         cur.execute("INSERT INTO tagmappings (task, tag) VALUES (7, 4)")
         # evA: 2011-01-01 10:00:00 - START task1    [00h 30m]
         # evB: 2011-01-01 10:30:00 - START task2    [01h 30m]
+        # evBa:2011-01-01 10:31:00 - TODO 'Todo for task2'
         # evC: 2011-01-01 10:35:00 - DIARY one
+        # evCa:2011-01-01 10:35:05 - DONE 'Todo for task2'
         # evD: 2011-01-01 12:00:00 - START task1    [04h 00m]
         # evE: 2011-01-01 13:00:00 - DIARY two
         # evF: 2011-01-01 13:30:00 - DIARY three

@@ -747,7 +747,7 @@ are counted towards the total. This is only valid when summarising by task.
         if len(items) == 1:
             return self._complete_task(text, ("current",))
         elif len(items) == 2:
-            return self._complete_list(text, ("tag", "untag", "diary"))
+            return self._complete_list(text, ("tag", "untag", "diary", "todos"))
         elif len(items) == 3 and items[2] in ("tag", "untag"):
             return self._complete_tag(text)
         else:
@@ -756,7 +756,7 @@ are counted towards the total. This is only valid when summarising by task.
 
     def do_task(self, args):
         """
-task <task> ( (tag|untag) <tag> | diary ) - changes task tags or displays diary.
+task <task> ( (tag|untag) <tag> | diary | todos) - changes task tags or displays diary or outstanding todos.
 
 <task> may either be a task name or "current" for the currently active task.
 
@@ -781,15 +781,18 @@ the specified task.
         else:
             task = items[0]
 
-        if items[1] == "diary":
+        if items[1] in ("diary", "todos"):
 
             if len(items) != 2:
-                self.logger.error("task cmd with diary takes no more args")
+                self.logger.error("task cmd with diary/todos takes no args")
                 return
             summary_obj = tracklib.TaskSummaryGenerator()
             entry_gen = self.db.get_task_log_entries(tasks=(task,))
             summary_obj.read_entries(entry_gen)
-            display_diary(summary_obj.diary_entries)
+            if items[1] == "diary":
+                display_diary(summary_obj.diary_entries)
+            else:
+                display_diary(summary_obj.pending_todos)
 
         else:
 
