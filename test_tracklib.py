@@ -396,6 +396,7 @@ class TestTimeTrackDB(unittest2.TestCase):
         self.db.start_task("task1")
         entry_time = int(time.time())
         self.db.add_diary_entry("entry1")
+
         cur = self.db.conn.cursor()
         cur.execute("SELECT task, description, time FROM diary")
         entries = list(cur)
@@ -417,6 +418,7 @@ class TestTimeTrackDB(unittest2.TestCase):
         self.db.tasks.add("task1")
         entry_time = time.time()
         self.db.add_task_todo("task1", "Test todo A for task1")
+
         cur = self.db.conn.cursor()
         cur.execute("SELECT task, description, added, done FROM todos")
         entries = list(cur)
@@ -431,8 +433,11 @@ class TestTimeTrackDB(unittest2.TestCase):
         self.db.tasks.add("task1")
         entry_time = time.time()
         self.db.add_task_todo("task1", "Test todo A for task1")
+        self.db.start_task("task1")
         done_time = time.time()
-        self.db.mark_todo_done("task1", "Test todo A for task1")
+        self.db.mark_todo_done("Test todo A for task1")
+        self.db.stop_task()
+
         cur = self.db.conn.cursor()
         cur.execute("SELECT task, description, added, done FROM todos")
         entries = list(cur)
@@ -447,8 +452,11 @@ class TestTimeTrackDB(unittest2.TestCase):
         self.db.tasks.add("task1")
         self.db.add_task_todo("task1", "Test todo A for task1")
         self.db.add_task_todo("task1", "Test todo B for task1")
+        self.db.start_task("task1")
         done_time = time.time()
-        self.db.mark_todo_done("task1", "Test todo A")
+        self.db.mark_todo_done("Test todo A")
+        self.db.stop_task()
+
         cur = self.db.conn.cursor()
         cur.execute("SELECT task, description, done FROM todos")
         entries = sorted(list(cur))
@@ -465,15 +473,16 @@ class TestTimeTrackDB(unittest2.TestCase):
         self.db.tasks.add("task1")
         self.db.add_task_todo("task1", "Test todo A for task1")
         with self.assertRaises(tracklib.TimeTrackError):
-            self.db.mark_todo_done("taskX", "Test todo")
+            self.db.mark_todo_done("Test todo")
 
 
     def test_mark_todo_done_ambiguous_prefix(self):
         self.db.tasks.add("task1")
         self.db.add_task_todo("task1", "Test todo A for task1")
         self.db.add_task_todo("task1", "Test todo B for task1")
+        self.db.start_task("task1")
         with self.assertRaises(tracklib.TimeTrackError):
-            self.db.mark_todo_done("task1", "Test todo")
+            self.db.mark_todo_done("Test todo")
 
 
     def test_mark_todo_done_unique_within_task_prefix(self):
@@ -481,8 +490,11 @@ class TestTimeTrackDB(unittest2.TestCase):
         self.db.tasks.add("task2")
         self.db.add_task_todo("task1", "Test todo A for task1")
         self.db.add_task_todo("task2", "Test todo A for task2")
+        self.db.start_task("task1")
         done_time = time.time()
-        self.db.mark_todo_done("task1", "Test")
+        self.db.mark_todo_done("Test")
+        self.db.stop_task()
+
         cur = self.db.conn.cursor()
         cur.execute("SELECT task, description, done FROM todos")
         entries = sorted(list(cur))
@@ -502,6 +514,9 @@ class TestTimeTrackDB(unittest2.TestCase):
 
     def _create_sample_task_logs(self):
         cur = self.db.conn.cursor()
+
+        # Layout of test tasks:
+        #
         # task1: tag1
         # task2: tag2
         # task3: tag1 tag2
@@ -509,6 +524,7 @@ class TestTimeTrackDB(unittest2.TestCase):
         # task5: tag1 tag4
         # task6: tag2 tag4
         # task7: tag1 tag2 tag4
+
         cur.execute("INSERT INTO tasks (id, name) VALUES (1, 'task1')")
         cur.execute("INSERT INTO tasks (id, name) VALUES (2, 'task2')")
         cur.execute("INSERT INTO tasks (id, name) VALUES (3, 'task3')")
@@ -531,9 +547,14 @@ class TestTimeTrackDB(unittest2.TestCase):
         cur.execute("INSERT INTO tagmappings (task, tag) VALUES (7, 1)")
         cur.execute("INSERT INTO tagmappings (task, tag) VALUES (7, 2)")
         cur.execute("INSERT INTO tagmappings (task, tag) VALUES (7, 4)")
+
+        # Sequence of events on test tasks:
+        #
         # evA: 2011-01-01 10:00:00 - START task1    [00h 30m]
         # evB: 2011-01-01 10:30:00 - START task2    [01h 30m]
         # evBa:2011-01-01 10:31:00 - TODO 'Todo for task2'
+        # evBb:2011-01-01 10:31:10 - TODO 'Todo for task3'
+        # evBc:2011-01-01 10:31:20 - TODO 'Todo for task4'
         # evC: 2011-01-01 10:35:00 - DIARY one
         # evCa:2011-01-01 10:35:05 - DONE 'Todo for task2'
         # evD: 2011-01-01 12:00:00 - START task1    [04h 00m]
@@ -541,16 +562,22 @@ class TestTimeTrackDB(unittest2.TestCase):
         # evF: 2011-01-01 13:30:00 - DIARY three
         # evG: 2011-01-01 16:00:00 - STOP task1
         # evH: 2011-01-02 10:00:00 - START task3    [24h 00m]
+        # evHa:2011-01-02 10:15:00 - DONE 'Todo for task3'
         # evI: 2011-01-02 12:00:00 - DIARY four
         # evJ: 2011-01-03 10:00:00 - START task4    [01h 00m]
         # evK: 2011-01-03 11:00:00 - START task5    [01h 00m]
         # evL: 2011-01-03 12:00:00 - START task6    [01h 00m]
         # evM: 2011-01-03 13:00:00 - START task7    [inf.   ]
         # (task7 is left running as the current task)
+
         evA, evB = (self._get_ts(1, 10, 0, 0), self._get_ts(1, 10, 30, 0))
+        evBa, evBb = (self._get_ts(1, 10, 31, 0), self._get_ts(1, 10, 31, 10))
+        evBc = self._get_ts(1, 10, 31, 20)
         evC, evD = (self._get_ts(1, 10, 35, 0), self._get_ts(1, 12, 0, 0))
+        evCa = self._get_ts(1, 10, 35, 5)
         evE, evF = (self._get_ts(1, 13, 0, 0), self._get_ts(1, 13, 30, 0))
         evG, evH = (self._get_ts(1, 16, 0, 0), self._get_ts(2, 10, 0, 0))
+        evHa = self._get_ts(2, 10, 15, 0)
         evI, evJ = (self._get_ts(2, 12, 0, 0), self._get_ts(3, 10, 0, 0))
         evK, evL = (self._get_ts(3, 11, 0, 0), self._get_ts(3, 12, 0, 0))
         evM = self._get_ts(3, 13, 0, 0)
@@ -583,6 +610,14 @@ class TestTimeTrackDB(unittest2.TestCase):
         cur.execute("INSERT INTO diary (task, description, time) VALUES"
                     " (3, 'four', ?)", (evI,))
 
+        # Insert todo entries.
+        cur.execute("INSERT INTO todos (task, description, added, done) VALUES"
+                    " (2, 'Todo for task2', ?, ?)", (evBa, evCa))
+        cur.execute("INSERT INTO todos (task, description, added, done) VALUES"
+                    " (3, 'Todo for task3', ?, ?)", (evBb, evHa))
+        cur.execute("INSERT INTO todos (task, description, added, done) VALUES"
+                    " (4, 'Todo for task4', ?, 0)", (evBc,))
+
         self.db.conn.commit()
 
 
@@ -604,10 +639,13 @@ class TestTimeTrackDB(unittest2.TestCase):
                          datetime.datetime(2011, 1, 1, 10, 30, 0))
         self.assertEqual(entries[1].end,
                          datetime.datetime(2011, 1, 1, 12, 0, 0))
-        self.assertEqual(len(entries[1].diary), 1)
+        self.assertEqual(len(entries[1].diary), 2)
         self.assertEqual(entries[1].diary[0],
                          (datetime.datetime(2011, 1, 1, 10, 35, 0),
                           'task2', 'one'))
+        self.assertEqual(entries[1].diary[1],
+                         (datetime.datetime(2011, 1, 1, 10, 35, 5),
+                          'task2', '[DONE] Todo for task2'))
 
         self.assertEqual(entries[2].task, 'task1')
         self.assertEqual(entries[2].start,
@@ -627,8 +665,11 @@ class TestTimeTrackDB(unittest2.TestCase):
                          datetime.datetime(2011, 1, 2, 10, 0, 0))
         self.assertEqual(entries[3].end,
                          datetime.datetime(2011, 1, 3, 10, 0, 0))
-        self.assertEqual(len(entries[3].diary), 1)
+        self.assertEqual(len(entries[3].diary), 2)
         self.assertEqual(entries[3].diary[0],
+                         (datetime.datetime(2011, 1, 2, 10, 15, 0),
+                          'task3', '[DONE] Todo for task3'))
+        self.assertEqual(entries[3].diary[1],
                          (datetime.datetime(2011, 1, 2, 12, 0, 0),
                           'task3', 'four'))
 
@@ -703,7 +744,8 @@ class TestTimeTrackDB(unittest2.TestCase):
 
     def test_query_start_filter(self):
         self._create_sample_task_logs()
-        entries = list(self.db.get_task_log_entries(start=datetime.datetime(2011, 1, 1, 12, 5, 0)))
+        entries = list(self.db.get_task_log_entries(
+                start=datetime.datetime(2011, 1, 1, 12, 5, 0)))
         self.assertEqual(len(entries), 6)
         self.assertEqual(entries[0].task, 'task1')
         self.assertEqual(entries[0].start,
@@ -719,7 +761,8 @@ class TestTimeTrackDB(unittest2.TestCase):
 
     def test_query_end_filter(self):
         self._create_sample_task_logs()
-        entries = list(self.db.get_task_log_entries(end=datetime.datetime(2011, 1, 1, 12, 0, 0)))
+        entries = list(self.db.get_task_log_entries(
+                end=datetime.datetime(2011, 1, 1, 12, 0, 0)))
         self.assertEqual(len(entries), 3)
         self.assertEqual(entries[0].task, 'task1')
         self.assertEqual(entries[1].task, 'task2')
@@ -733,7 +776,9 @@ class TestTimeTrackDB(unittest2.TestCase):
 
     def test_query_start_end_filter(self):
         self._create_sample_task_logs()
-        entries = list(self.db.get_task_log_entries(start=datetime.datetime(2011, 1, 1, 13, 15, 0), end=datetime.datetime(2011, 1, 2, 11, 0, 0)))
+        entries = list(self.db.get_task_log_entries(
+                start=datetime.datetime(2011, 1, 1, 13, 15, 0),
+                end=datetime.datetime(2011, 1, 2, 10, 10, 0)))
 
         self.assertEqual(len(entries), 2)
 
@@ -751,7 +796,7 @@ class TestTimeTrackDB(unittest2.TestCase):
         self.assertEqual(entries[1].start,
                          datetime.datetime(2011, 1, 2, 10, 0, 0))
         self.assertEqual(entries[1].end,
-                         datetime.datetime(2011, 1, 2, 11, 0, 0))
+                         datetime.datetime(2011, 1, 2, 10, 10, 0))
         self.assertEqual(len(entries[1].diary), 0)
 
 
@@ -788,12 +833,18 @@ class TestTimeTrackDB(unittest2.TestCase):
         self.assertEqual(gen.diary_entries["task1"][1],
                          (datetime.datetime(2011, 1, 1, 13, 30, 0),
                           'task1', 'three'))
-        self.assertEqual(len(gen.diary_entries["task2"]), 1)
+        self.assertEqual(len(gen.diary_entries["task2"]), 2)
         self.assertEqual(gen.diary_entries["task2"][0],
                          (datetime.datetime(2011, 1, 1, 10, 35, 0),
                           'task2', 'one'))
-        self.assertEqual(len(gen.diary_entries["task3"]), 1)
+        self.assertEqual(gen.diary_entries["task2"][1],
+                         (datetime.datetime(2011, 1, 1, 10, 35, 5),
+                          'task2', '[DONE] Todo for task2'))
+        self.assertEqual(len(gen.diary_entries["task3"]), 2)
         self.assertEqual(gen.diary_entries["task3"][0],
+                         (datetime.datetime(2011, 1, 2, 10, 15, 0),
+                          'task3', '[DONE] Todo for task3'))
+        self.assertEqual(gen.diary_entries["task3"][1],
                          (datetime.datetime(2011, 1, 2, 12, 0, 0),
                           'task3', 'four'))
 
@@ -801,7 +852,8 @@ class TestTimeTrackDB(unittest2.TestCase):
     def test_tag_summary_generator(self):
         self._create_sample_task_logs()
         gen = tracklib.TagSummaryGenerator()
-        gen.read_entries(self.db.get_task_log_entries(end=datetime.datetime(2011, 1, 3, 15, 0, 0)))
+        gen.read_entries(self.db.get_task_log_entries(
+                end=datetime.datetime(2011, 1, 3, 15, 0, 0)))
 
         # Check total times
         self.assertEqual(len(gen.total_time), 3)
@@ -817,7 +869,7 @@ class TestTimeTrackDB(unittest2.TestCase):
 
         # Check diary entries
         self.assertEqual(len(gen.diary_entries), 2)
-        self.assertEqual(len(gen.diary_entries["tag1"]), 3)
+        self.assertEqual(len(gen.diary_entries["tag1"]), 4)
         self.assertEqual(gen.diary_entries["tag1"][0],
                          (datetime.datetime(2011, 1, 1, 13, 0, 0),
                           'task1', 'two'))
@@ -825,15 +877,74 @@ class TestTimeTrackDB(unittest2.TestCase):
                          (datetime.datetime(2011, 1, 1, 13, 30, 0),
                           'task1', 'three'))
         self.assertEqual(gen.diary_entries["tag1"][2],
+                         (datetime.datetime(2011, 1, 2, 10, 15, 0),
+                          'task3', '[DONE] Todo for task3'))
+        self.assertEqual(gen.diary_entries["tag1"][3],
                          (datetime.datetime(2011, 1, 2, 12, 0, 0),
                           'task3', 'four'))
-        self.assertEqual(len(gen.diary_entries["tag2"]), 2)
+        self.assertEqual(len(gen.diary_entries["tag2"]), 4)
         self.assertEqual(gen.diary_entries["tag2"][0],
                          (datetime.datetime(2011, 1, 1, 10, 35, 0),
                           'task2', 'one'))
         self.assertEqual(gen.diary_entries["tag2"][1],
+                         (datetime.datetime(2011, 1, 1, 10, 35, 5),
+                          'task2', '[DONE] Todo for task2'))
+        self.assertEqual(gen.diary_entries["tag2"][2],
+                         (datetime.datetime(2011, 1, 2, 10, 15, 0),
+                          'task3', '[DONE] Todo for task3'))
+        self.assertEqual(gen.diary_entries["tag2"][3],
                          (datetime.datetime(2011, 1, 2, 12, 0, 0),
                           'task3', 'four'))
+
+
+    def test_pending_todos_no_filter(self):
+        self._create_sample_task_logs()
+        todos = self.db.get_pending_todos()
+        self.assertEqual(len(todos), 1)
+        self.assertEqual(todos[0],
+                         (datetime.datetime(2011, 1, 1, 10, 31, 20),
+                          "task4", "Todo for task4"))
+
+
+    def test_pending_todos_filter_before(self):
+        self._create_sample_task_logs()
+        todos = self.db.get_pending_todos(
+                at_datetime=datetime.datetime(2011, 1, 1))
+        self.assertEqual(len(todos), 0)
+
+
+    def test_pending_todos_filter_after(self):
+        self._create_sample_task_logs()
+        todos = self.db.get_pending_todos(
+                at_datetime=datetime.datetime(2011, 1, 3))
+        self.assertEqual(len(todos), 1)
+        self.assertEqual(todos[0],
+                         (datetime.datetime(2011, 1, 1, 10, 31, 20),
+                          "task4", "Todo for task4"))
+
+
+    def test_pending_todos_filter_between_adding(self):
+        self._create_sample_task_logs()
+        todos = self.db.get_pending_todos(
+                at_datetime=datetime.datetime(2011, 1, 1, 10, 31, 5))
+        self.assertEqual(len(todos), 1)
+        self.assertEqual(todos[0],
+                         (datetime.datetime(2011, 1, 1, 10, 31, 0),
+                          "task2", "Todo for task2"))
+
+
+    def test_pending_todos_filter_between_completing(self):
+        self._create_sample_task_logs()
+        todos = self.db.get_pending_todos(
+                at_datetime=datetime.datetime(2011, 1, 2))
+        self.assertEqual(len(todos), 2)
+        self.assertEqual(todos[0],
+                         (datetime.datetime(2011, 1, 1, 10, 31, 10),
+                          "task3", "Todo for task3"))
+        self.assertEqual(todos[1],
+                         (datetime.datetime(2011, 1, 1, 10, 31, 20),
+                          "task4", "Todo for task4"))
+
 
 
 if __name__ == "__main__":

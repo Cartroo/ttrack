@@ -99,6 +99,7 @@ class TiedSet(collections.MutableSet):
             if self.base_type == "task":
                 cur.execute("DELETE FROM tasklog WHERE task=?", (del_id,))
                 cur.execute("DELETE FROM diary WHERE task=?", (del_id,))
+                cur.execute("DELETE FROM todos WHERE task=?", (del_id,))
 
             # Remove the row itself.
             cur.execute("DELETE FROM %s WHERE id=?" % (self.table,), (del_id,))
@@ -113,7 +114,7 @@ def create_tracklib_schema(logger, conn):
 
     with conn:
 
-        # Schema v1.
+        # Schema v1 (move to v2 only for incompatible changes).
         if "tasks" not in tables:
             cur.execute("CREATE TABLE tasks ("
                         " id INTEGER PRIMARY KEY,"
@@ -169,7 +170,6 @@ class TaskLogEntry(object):
     def __init__(self, logger, db, task, entry_id, start, end,
                  mutable_times=True):
         self.diary = []
-        self.pending_todos = []
         self.tags = set()
         self.task = task
         self.entry_id = entry_id
@@ -183,7 +183,6 @@ class TaskLogEntry(object):
         self.get_diary_entries(logger, cur, task, start, end)
         self.get_tags(logger, cur, task)
         self.get_completed_todos_as_diary(logger, cur, task, start, end)
-        self.get_pending_todos(logger, cur, task, start, end)
 
 
     @property
@@ -310,25 +309,8 @@ class TaskLogEntry(object):
         # Use bisect rather than letting SQLite do the sort because we don't
         # want to rely on the order of calling this and get_completed_todos().
         for row in cur:
-            item = (datetime.fromtimestamp(row[1]), task, "DONE: " + row[0])
+            item = (datetime.fromtimestamp(row[1]), task, "[DONE] " + row[0])
             bisect.insort_right(self.diary, item)
-
-
-    def get_pending_todos(self, logger, cur, task, start, end):
-        if self.end is None:
-            cur.execute("SELECT O.added, O.description FROM todos AS O"
-                        " INNER JOIN tasks AS T ON O.task=T.id"
-                        " WHERE T.name=? AND O.done=0 ORDER BY O.added",
-                        (task,))
-        else:
-            cur.execute("SELECT O.added, O.description FROM todos AS O"
-                        " INNER JOIN tasks AS T ON O.task=T.id"
-                        " WHERE T.name=? AND (O.done=0 OR O.done>?)"
-                        " AND O.added<=? ORDER BY O.added",
-                        (task, end, end))
-
-        self.pending_todos = [(datetime.fromtimestamp(row[0]), task, row[1])
-                              for row in cur]
 
 
 
@@ -551,11 +533,11 @@ class TimeTrackDB(object):
         return task_tags
 
 
-    def get_tag_tasks(self, task):
+    def get_tag_tasks(self, tag):
         """Returns the set of tasks for a particular tag."""
 
         # Get tag ID.
-        tag_id = self.tags.get_id(task)
+        tag_id = self.tags.get_id(tag)
 
         # Get list of rows in tagmappings for specified tag.
         cur = self.conn.cursor()
@@ -664,24 +646,28 @@ class TimeTrackDB(object):
                         (task_id, epoch_time, desc))
 
 
-    def mark_todo_done(self, task, desc, at_datetime=None):
-        """Marks the specified todo item as done."""
+    def mark_todo_done(self, desc, at_datetime=None):
+        """Marks a todo on the current task as complete."""
 
-        try:
-            task_id = self.tasks.get_id(task)
-        except KeyError, e:
-            raise TimeTrackError("task not found: %s" % (e,))
-
+        # Work out the task active at the specified time.
         if at_datetime is None:
             at_datetime = datetime.now()
+            task = self.get_current_task()
+            if task is None:
+                raise TimeTrackError("no task currently active")
+        else:
+            task = self.get_task_at_time(at_datetime)
+            if task is None:
+                raise TimeTrackError("no task active at %r" % (at_datetime,))
 
         # Update value in database.
-        epoch_time = time.mktime(datetime.now().timetuple())
+        epoch_time = time.mktime(at_datetime.timetuple())
+        task_id = self.tasks.get_id(task)
         cur = self.conn.cursor()
         with self.conn:
             cur.execute("SELECT id FROM todos WHERE task=?"
                         " AND description LIKE ?",
-                        (task_id, desc + "%"))
+                        (task_id, "%" + desc + "%"))
             matches = sum(1 for row in cur)
             if matches == 0:
                 raise TimeTrackError("todo not found for task %s: %s"
@@ -691,7 +677,37 @@ class TimeTrackDB(object):
                                      % (matches, task, desc))
             cur.execute("UPDATE todos SET done=? WHERE task=?"
                         " AND description LIKE ?",
-                        (epoch_time, task_id, desc + "%"))
+                        (epoch_time, task_id, "%" + desc + "%"))
+
+
+    def get_pending_todos(self, task=None, tag=None, at_datetime=None):
+
+        if at_datetime is None:
+            at_datetime = datetime.now()
+
+        where_clauses = []
+        args = []
+        where_clauses.append("(O.done>? OR O.done=0)")
+        args.append(time.mktime(at_datetime.timetuple()))
+        where_clauses.append("O.added<=?")
+        args.append(time.mktime(at_datetime.timetuple()))
+        if task is not None:
+            if tag is not None:
+                raise TimeTrackError("can't specify both tag and task")
+            where_clauses.append("O.task=?")
+            args.append(self.tasks.get_id(task))
+        elif tag is not None:
+            tasks = self.get_tag_tasks(tag)
+            where_clauses.append("T.name IN ('%s')" %
+                                 ("','".join(str(i) for i in tasks),))
+
+        cur = self.conn.cursor()
+        cur.execute("SELECT O.added, T.name, O.description FROM todos AS O"
+                    " INNER JOIN tasks AS T ON O.task=T.id"
+                    " WHERE %s ORDER BY O.added"
+                    % (" AND ".join(where_clauses),), args)
+
+        return [(datetime.fromtimestamp(row[0]), row[1], row[2]) for row in cur]
 
 
     def get_task_log_entries(self, start=None, end=None, tags=None, tasks=None):
@@ -782,14 +798,14 @@ class SummaryGenerator(object):
     def __init__(self):
         self.entries = []
 
-    def read_entries(self, entries):
+    def read_entries(self, entries, merge_diaries=False):
         """Read multiple entries."""
 
         for entry in entries:
-            self.read_entry(entry)
+            self.read_entry(entry, merge_diaries)
 
 
-    def read_entry(self, entry):
+    def read_entry(self, entry, merge_diaries):
         """Read a single TaskLogEntry instance."""
 
         self.entries.append(entry)
@@ -803,11 +819,10 @@ class TaskSummaryGenerator(SummaryGenerator):
         self.total_time = collections.defaultdict(int)
         self.switches = collections.defaultdict(int)
         self.diary_entries = collections.defaultdict(list)
-        self.pending_todos = collections.defaultdict(list)
         self.previous_entry = None
 
 
-    def read_entry(self, entry):
+    def read_entry(self, entry, merge_diaries):
         """Add entry's duration to appropriate task in total_time.
 
         The switches attribute records context switches, which are defined
@@ -830,9 +845,10 @@ class TaskSummaryGenerator(SummaryGenerator):
             if context_switch:
                 self.switches[entry.task] += 1
             for diary_entry in entry.diary:
-                bisect.insort(self.diary_entries[entry.task], diary_entry)
-            for todo in entry.pending_todos:
-                bisect.insort(self.pending_todos[entry.task], todo)
+                if merge_diaries:
+                    bisect.insort(self.diary_entries[None], diary_entry)
+                else:
+                    bisect.insort(self.diary_entries[entry.task], diary_entry)
 
         self.previous_entry = entry
 
@@ -844,12 +860,11 @@ class TagSummaryGenerator(SummaryGenerator):
         self.total_time = collections.defaultdict(int)
         self.switches = collections.defaultdict(int)
         self.diary_entries = collections.defaultdict(list)
-        self.pending_todos = collections.defaultdict(list)
         self.previous_entry = None
 
 
-    def read_entry(self, entry):
-        """Add entry's duration al all applicable tags in total_time.
+    def read_entry(self, entry, merge_diaries):
+        """Add entry's duration to all applicable tags in total_time.
 
         The switches attribute records context switches, which are defined
         as cases where the new entry contains a tag not attached to the
@@ -864,9 +879,10 @@ class TagSummaryGenerator(SummaryGenerator):
                     if tag not in self.previous_entry.tags:
                         self.switches[tag] += 1
             for diary_entry in entry.diary:
-                bisect.insort(self.diary_entries[tag], diary_entry)
-            for todo in entry.pending_todos:
-                bisect.insort(self.pending_todos[tag], todo)
+                if merge_diaries:
+                    bisect.insort(self.diary_entries[None], diary_entry)
+                else:
+                    bisect.insort(self.diary_entries[tag], diary_entry)
         self.previous_entry = entry
 
 

@@ -2,6 +2,7 @@
 
 import atexit
 import cmd
+import collections
 import datetime
 import logging
 import operator
@@ -159,28 +160,33 @@ def display_diary(diary):
     """Displays list of diary entries by task."""
 
     print
-    wrapper = textwrap.TextWrapper(initial_indent="| | ",
-                                   subsequent_indent="| | ")
+    if diary.keys() == [None]:
+        prefix = ""
+    else:
+        prefix = "| "
+    wrapper = textwrap.TextWrapper(initial_indent=prefix+"| ",
+                                   subsequent_indent=prefix+"| ")
     for name, entries in diary.items():
         if not entries:
             continue
-        print "+----[ %s ]----" % (name,)
-        print "|"
+        if name is not None:
+            print "+----[ %s ]----" % (name,)
+            print "|"
         for entry_time, entry_task, entry_desc in entries:
             date_str = format_datetime(entry_time)
-            print "| +---- %s ----[ %s ]----" % (date_str, entry_task)
+            print "%s+---- %s ----[ %s ]----" % (prefix, date_str, entry_task)
             seen_text = False
             para_break = False
             for line in entry_desc.split("\n"):
                 if line:
                     if para_break:
-                        print "| |"
+                        print prefix + "|"
                         para_break = False
                     print wrapper.fill(line)
                     seen_text = True
                 elif seen_text:
                     para_break = True
-            print "|"
+            print prefix
         print
 
 
@@ -269,7 +275,7 @@ to apply those tags to the new task without requiring other 'task' commands.
         if items[0] not in ("task", "tag"):
             self.logger.error("create cmd takes 'task' or 'tag' as first arg")
             return
-        if not items[1]:
+        if not items[1] or items[1] == "current" or items[1] == "done":
             self.logger.error("name invalid")
             return
         if items[0] != "task" and len(items) > 2:
@@ -307,8 +313,8 @@ to apply those tags to the new task without requiring other 'task' commands.
 delete (task|tag) <name> - delete and existing tag or task.
 
 WARNING: Deleting a tag will remove it from all tasks. Deleting a
-         task will also remove associated diary and log entries.
-         DELETION OF DIARY AND LOG ENTRIES IS PERMANENT - THERE IS NO UNDO!
+         task will also remove associated diary, todo and log entries.
+         DELETION OF ALL ITEMS IS PERMANENT - THERE IS NO UNDO!
 """
 
         items = shlex.split(args)
@@ -358,6 +364,53 @@ diary <entry> - add a new diary entry to the current task.
         try:
             self.db.add_diary_entry(args)
             print "Entry added to task '%s'" % (task,)
+        except tracklib.TimeTrackError, e:
+            self.logger.error("diary error: %s", e)
+
+
+    def complete_todo(self, text, line, begidx, endidx):
+        items = shlex.split(line[:begidx])
+        if len(items) == 1:
+            return self._complete_task(text, ("current", "done"))
+        else:
+            return []
+
+
+    def do_todo(self, args):
+        """
+todo ( done | <task> ) <entry>
+
+Add a new todo to the specified task, or mark one on the current task as done.
+"""
+        items = shlex.split(args)
+        if not 1 < len(items):
+            self.logger.error("todo cmd takes at least two arguments")
+            return
+
+        # Work out task name.
+        if items[0] == "current":
+            task = self.db.get_current_task()
+            if task is None:
+                self.logger.error("no current task")
+                return
+        elif items[0] == "done":
+            task = None
+        else:
+            task = items[0]
+
+        todo_text = " ".join(items[1:])
+        if not todo_text:
+            self.logger.error("empty entry specified in todo command")
+            return
+
+        try:
+            if task is None:
+                self.db.mark_todo_done(todo_text)
+            else:
+                self.db.add_task_todo(task, todo_text)
+            print "Todo added to task '%s'" % (task,)
+        except KeyError:
+            self.logger.error("no such task: %s", task)
         except tracklib.TimeTrackError, e:
             self.logger.error("diary error: %s", e)
 
@@ -430,10 +483,17 @@ inactivity, or to resume work on something after an interruption.
 
     def complete_show(self, text, line, begidx, endidx):
         if line[:begidx].strip() == "show":
-            return self._complete_list(text, ("tasks", "tags", "unused"))
+            return self._complete_list(text, ("tasks", "tags", "unused",
+                                              "todos", "diary"))
         elif line[:begidx].strip() == "show unused":
             return self._complete_list(text, ("tasks", "tags"))
         elif line[:begidx].strip() in ("show tasks", "show unused tasks"):
+            return self._complete_tag(text)
+        elif line[:begidx].strip() in ("show todos", "show diary"):
+            return self._complete_list(text, ("task", "tag"))
+        elif line[:begidx].strip() in ("show todos task", "show diary task"):
+            return self._complete_task(text, ("current",))
+        elif line[:begidx].strip() in ("show todos tag", "show diary tag"):
             return self._complete_tag(text)
         else:
             return []
@@ -441,43 +501,78 @@ inactivity, or to resume work on something after an interruption.
 
     def do_show(self, args):
         """
-show [unused] (tasks [<tag>]|tags) - display a list of available tasks or tags.
+show ([unused] (tasks [<tag>]|tags) | (todos|diary) [task <task>|tag <tag>])
+
+Display a list of available tasks or tasks, or diary entries or todo items.
 
 The optional 'unused' keyword shows only tasks which haven't been active in
-the past five weeks or tags which have no tasks attached to them. When listing
-tasks, an optional tag may be specified to filter the tasks displayed to just
-those with the tag attached.
+the past five weeks or tags which have no tasks attached to them - this is only
+valid when listing tags or tasks. When listing tasks, an optional tag may be
+specified to filter the tasks displayed to just those with the tag attached.
+
+When listing todos, all outstanding todo items are shown, optionally filtered
+by task or tag. When listing diary entries, all entries are shown, also
+optionally filtered. Note that without filtering all diary entries every
+created will be listed, which may product significant amounts of output.
 """
 
         items = shlex.split(args)
         if not 1 <= len(items) <= 3:
             self.logger.error("show cmd takes 1-3 arguments")
             return
-        if items[0] not in ("tasks", "tags", "unused"):
-            self.logger.error("show cmd takes 'tasks', 'tags' or 'unused' as"
-                              " first arg")
-            return
         filter_tag = None
+        filter_task = None
         unused = 0
         if items[0] == "unused":
             unused = 1
+            if len(items) < 2:
+                self.logger.error("show cmd takes 'tasks' or 'tags' after"
+                                  " 'unused'")
+                return
             if items[1] not in ("tasks", "tags"):
                 self.logger.error("show cmd takes 'tasks' or 'tags' after"
                                   " 'unused'")
                 return
-        if len(items) == 2 + unused:
-            if items[0 + unused] == "tasks":
+        if items[unused] == "tasks":
+            if len(items) == 2 + unused:
                 filter_tag = items[1 + unused]
-                if filter_tag not in self.db.tags:
-                    self.logger.error("no such tag '%s'", filter_tag)
-                    return
-            else:
+        elif items[unused] == "tags":
+            if len(items) > 1 + unused:
                 self.logger.error("show cmd only accepts filter tag arg with"
                                   " 'tasks'")
                 return
+        elif items[unused] in ("todos", "diary"):
+            if len(items) == 2:
+                self.logger.error("show cmd with 'todos' or 'diary' accepts"
+                                  " either zero or two additional arguments")
+                return
+            if len(items) > 2:
+                if items[1] == "task":
+                    filter_task = items[2]
+                    if filter_task == "current":
+                        filter_task = self.db.get_current_task()
+                        if filter_task is None:
+                            self.logger.error("no current task")
+                            return
+                elif items[1] == "tag":
+                    filter_tag = items[2]
+                else:
+                    self.logger.error("show cmd with 'todos' or 'diary' accepts"
+                                      " 'task' or 'tag' as next arg")
+                    return
+            if filter_tag is not None and filter_tag not in self.db.tags:
+                self.logger.error("no such tag '%s'", filter_tag)
+                return
+            if filter_task is not None and filter_task not in self.db.tasks:
+                self.logger.error("no such task '%s'", filter_task)
+                return
+        else:
+            self.logger.error("unrecognised arg to show cmd %r", items[unused])
 
         try:
             spec = "Unused" if unused else "All"
+
+            # List tasks
             if items[0 + unused] == "tasks":
                 active_tasks = set()
                 if unused:
@@ -498,7 +593,9 @@ those with the tag attached.
                         print "  %s (%s)" % (task, ", ".join(tags))
                     else:
                         print "  %s" % (task,)
-            else:
+
+            # List tags
+            elif items[0 + unused] == "tags":
                 print "%s tags:" % (spec,)
                 for tag in self.db.tags:
                     tasks = len(self.db.get_tag_tasks(tag))
@@ -506,6 +603,34 @@ those with the tag attached.
                         continue
                     print "  %s (%d task%s)" % (tag, tasks,
                                                 "" if tasks==1 else "s")
+
+            # List todos or diary
+            elif items[0] == "todos":
+                if filter_task is not None:
+                    print "Outstanding todos for task " + filter_task
+                elif filter_tag is not None:
+                    print "Outstanding todos for tag " + filter_tag
+                else:
+                    print "All outstanding todos"
+                entries = self.db.get_pending_todos(tag=filter_tag,
+                                                    task=filter_task)
+                display_diary({None: entries})
+
+            else:
+                if filter_task is not None:
+                    print "Diary entries for task " + filter_task
+                    entry_gen = self.db.get_task_log_entries(
+                            tasks=(filter_task,))
+                elif filter_tag is not None:
+                    print "Diary entries for tag " + filter_tag
+                    entry_gen = self.db.get_task_log_entries(tags=(filter_tag,))
+                else:
+                    print "All diary entries"
+                    entry_gen = self.db.get_task_log_entries()
+                summary_obj = tracklib.TaskSummaryGenerator()
+                summary_obj.read_entries(entry_gen, merge_diaries=True)
+                display_diary(summary_obj.diary_entries)
+
         except tracklib.TimeTrackError, e:
             self.logger.error("show error: %s", e)
 
@@ -756,9 +881,9 @@ are counted towards the total. This is only valid when summarising by task.
 
     def do_task(self, args):
         """
-task <task> ( (tag|untag) <tag> | diary | todos) - changes task tags or displays diary or outstanding todos.
+task <task> (tag|untag) <tag>
 
-<task> may either be a task name or "current" for the currently active task.
+Changes the tags applied to <task>, which may be a task name or "current".
 
 When called with either the "tag" or "untag" argument, this commands expects
 the name of a tag as the next argument and adds or removes that tag from the
@@ -786,13 +911,13 @@ the specified task.
             if len(items) != 2:
                 self.logger.error("task cmd with diary/todos takes no args")
                 return
-            summary_obj = tracklib.TaskSummaryGenerator()
-            entry_gen = self.db.get_task_log_entries(tasks=(task,))
-            summary_obj.read_entries(entry_gen)
             if items[1] == "diary":
+                summary_obj = tracklib.TaskSummaryGenerator()
+                entry_gen = self.db.get_task_log_entries(tasks=(task,))
+                summary_obj.read_entries(entry_gen)
                 display_diary(summary_obj.diary_entries)
             else:
-                display_diary(summary_obj.pending_todos)
+                display_diary({task: self.db.get_pending_todos(task=task)})
 
         else:
 

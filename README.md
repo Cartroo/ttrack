@@ -34,8 +34,8 @@ Task Tracking Basics
 --------------------
 
 When executed with no arguments, TTrack enters interactive mode. Commands
-can be entered at the prompt, and tab-completion should work for command
-names and most arguments.
+can be entered at the `ttrack>>>` prompt, and tab-completion should work for
+command names and most arguments.
 
 The `help` command can be used to list available commands, providing a
 command as an argument provides more detailed help for that command. For
@@ -52,40 +52,58 @@ easily delete your `~/.timetrackdb` file to erase everything you do here.
 
 First, create some tasks:
 
-    create task project1
-    create task project2
-    create task bug1234
+    ttrack>>> create task projectx
+    ttrack>>> create task projectz
+    ttrack>>> create task bug1234
 
 You can now list the tasks that you've created:
 
-    show tasks
+    ttrack>>> show tasks
 
 You can use the `start` command to start work on a task:
 
-    start project2
+    ttrack>>> start project2
 
 If you omit the task name, the most recently-created task will be assumed.
 
 The `status` command shows you what you're working on now, and what you were
 working on previous to that, if anything:
 
-    status
+    ttrack>>> status
 
 Whilst working on a task, you can add "diary" entries to it, which are
 intended to be small reminders of your progress. To do this, simply use the
 `diary` command, where the remainder of the line becomes your diary entry:
 
-    diary Finished planning on Project 2, next I need to implement phase 1.
+    ttrack>>> diary Finished planning on Project X, on to phase 1 development.
 
 Feel free to add more diary entries. Each entry will be marked with the time
 at which you add it and the current task that was in effect at that time.
 You can display your diary entries for this task with:
 
-    task project2 diary
+    ttrack>>> show diary task projectx
+
+You can also track "todo" items for projects. These are just arbitrary text
+which are associated with a task and can be marked as completed. To add a new
+"todo" item to Project X:
+
+    ttrack>>> todo projectx Implement phase 1.
+
+Any "todo" item on the currently active task can be marked as "done":
+
+    ttrack>>> todo done Impl
+
+Note that only a unqiue portion of the "todo" item text need be specified - you
+will receive a warning if there is ambiguity within a task (but it's perfectly
+acceptable for "todo" text to be identical between tasks). Any completed "todo"
+items will appear in the diary for a task, and any outstanding items can be
+shown with:
+
+    ttrack>>> show todos
 
 If you start working on a new task, the old task is automatically stopped:
 
-    start project1
+    ttrack>>> start projectz
 
 If you use the `status` command now you should see that the current task has
 changed and the previous task is now filled in. You can switch between tasks
@@ -94,7 +112,7 @@ arbitrarily, and TTrack always allocates your time against the current task.
 Since work on tasks can often be interrupted, there is a command which allows
 you to easily revert to the previously active task:
 
-    resume
+    ttrack>>> resume
 
 If working on a task, this command will switch you back to the previous task.
 This is simply a convenience for the equivalent `start` command, to avoid you
@@ -103,13 +121,13 @@ having to type the task name again.
 You can also stop allocating your time to anything - for example, when it's
 time to leave the office or go to bed:
 
-    stop
+    ttrack>>> stop
 
 If you execute `resume` whilst working on no task, it will restart whatever
 task was most recently current.
 
 
-Tags and Reports
+Tags and Listing
 ----------------
 
 Tasks can be organised by using tags. A tag is a name which can be applied to
@@ -126,11 +144,11 @@ and change tags later for reporting purposes.
 
 Continuing the example above, create some tags and add them to tasks:
 
-    create tag projects
-    create tag commercial
-    task project1 tag projects
-    task project2 tag projects
-    task project2 tag commercial
+    ttrack>>> create tag projects
+    ttrack>>> create tag commercial
+    ttrack>>> task projectx tag projects
+    ttrack>>> task projecty tag projects
+    ttrack>>> task projecty tag commercial
 
 If you wish to remove a tag at a later stage, you can use `task X untag Y` in
 the same way.
@@ -139,7 +157,29 @@ As a shortcut, when creating a task you can optionally specify a list of one
 or more tags after the task name, which saves additional `task` commands to
 add them:
 
-    create task project3 projects commercial
+    ttrack>>> create task project-profit projects commercial
+
+When listing tasks, the tags for that task are shown after the task name:
+
+    ttrack>>> show tasks
+    All tasks:
+      projectx (projects)
+      projecty (projects, commercial)
+      project-profit (projects, commercial)
+      bug1234
+
+When listing tags with `show tags`, the number of tasks with that tag attached
+is shown - this can be useful to determine which tags are obsolete.
+
+On the subject of the `show` command, the `diary` and `todos` variants can
+optionally filter by tag or task. For example, to show the diary entries
+for only tasks tagged with "projects":
+
+    ttrack>>> show diary tag projects
+
+
+Reports
+-------
 
 Now you've created some tasks and tags, and allocated some time to them,
 it's time to learn how to generate reports based on that time. Reports are
