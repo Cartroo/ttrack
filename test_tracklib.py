@@ -5,7 +5,7 @@ import datetime
 import logging
 import sqlite3
 import time
-import unittest2
+import unittest
 
 # Module under test
 import tracklib
@@ -19,7 +19,7 @@ class NullHandler(logging.Handler):
 
 
 
-class TestTaskTiedSet(unittest2.TestCase):
+class TestTaskTiedSet(unittest.TestCase):
 
     def setUp(self):
         logger = NullHandler()
@@ -153,7 +153,7 @@ class TestTaskTiedSet(unittest2.TestCase):
 
 
 
-class TestTagTiedSet(unittest2.TestCase):
+class TestTagTiedSet(unittest.TestCase):
 
     def setUp(self):
         logger = NullHandler()
@@ -238,7 +238,7 @@ class TestTagTiedSet(unittest2.TestCase):
 
 
 
-class TestTimeTrackDB(unittest2.TestCase):
+class TestTimeTrackDB(unittest.TestCase):
 
     def setUp(self):
         logger = NullHandler()
@@ -948,6 +948,6 @@ class TestTimeTrackDB(unittest2.TestCase):
 
 
 if __name__ == "__main__":
-    unittest2.main()
+    unittest.main()
 
 
