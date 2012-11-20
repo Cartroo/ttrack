@@ -119,42 +119,42 @@ class TestMatching(unittest.TestCase):
     def test_match_sequence(self):
         spec = "one two three"
         tree = cmdparser.parse_spec(spec)
-        self.assertEqual(tree.check_match(("one", "two", "three")), True)
-        self.assertEqual(tree.check_match(("one", "two")), False)
-        self.assertEqual(tree.check_match(("two", "three")), False)
-        self.assertEqual(tree.check_match(("one", "three")), False)
-        self.assertEqual(tree.check_match(("two", "one", "three")), False)
-        self.assertEqual(tree.check_match(("one", "two", "threeX")), False)
-        self.assertEqual(tree.check_match(("one", "two", "thre")), False)
-        self.assertEqual(tree.check_match([]), False)
+        self.assertEqual(tree.check_match(("one", "two", "three")), None)
+        self.assertEqual(tree.check_match(("one", "two")), "")
+        self.assertEqual(tree.check_match(("two", "three")), "two")
+        self.assertEqual(tree.check_match(("one", "three")), "three")
+        self.assertEqual(tree.check_match(("two", "one", "three")), "two")
+        self.assertEqual(tree.check_match(("one", "two", "threeX")), "threeX")
+        self.assertEqual(tree.check_match(("one", "two", "thre")), "thre")
+        self.assertEqual(tree.check_match([]), "")
 
 
     def test_match_alternation(self):
         spec = "(one | two | three)"
         tree = cmdparser.parse_spec(spec)
-        self.assertEqual(tree.check_match(("one",)), True)
-        self.assertEqual(tree.check_match(("two",)), True)
-        self.assertEqual(tree.check_match(("three",)), True)
-        self.assertEqual(tree.check_match(("one", "two")), False)
-        self.assertEqual(tree.check_match(("one", "one")), False)
-        self.assertEqual(tree.check_match(("one", "two", "three")), False)
-        self.assertEqual(tree.check_match([]), False)
+        self.assertEqual(tree.check_match(("one",)), None)
+        self.assertEqual(tree.check_match(("two",)), None)
+        self.assertEqual(tree.check_match(("three",)), None)
+        self.assertEqual(tree.check_match(("one", "two")), "two")
+        self.assertEqual(tree.check_match(("one", "one")), "one")
+        self.assertEqual(tree.check_match(("one", "two", "three")), "two")
+        self.assertEqual(tree.check_match([]), "")
 
 
     def test_match_optional(self):
         spec = "one [two] three"
         tree = cmdparser.parse_spec(spec)
-        self.assertEqual(tree.check_match(("one", "three")), True)
-        self.assertEqual(tree.check_match(("one", "two", "three")), True)
-        self.assertEqual(tree.check_match(("one", "twoX", "three")), False)
-        self.assertEqual(tree.check_match(("one", "two")), False)
-        self.assertEqual(tree.check_match(("one", "three", "two")), False)
-        self.assertEqual(tree.check_match(("two", "one", "three")), False)
-        self.assertEqual(tree.check_match(("two", "three")), False)
-        self.assertEqual(tree.check_match(("one",)), False)
-        self.assertEqual(tree.check_match(("two",)), False)
-        self.assertEqual(tree.check_match(("three",)), False)
-        self.assertEqual(tree.check_match([]), False)
+        self.assertEqual(tree.check_match(("one", "three")), None)
+        self.assertEqual(tree.check_match(("one", "two", "three")), None)
+        self.assertEqual(tree.check_match(("one", "twoX", "three")), "twoX")
+        self.assertEqual(tree.check_match(("one", "two")), "")
+        self.assertEqual(tree.check_match(("one", "three", "two")), "two")
+        self.assertEqual(tree.check_match(("two", "one", "three")), "two")
+        self.assertEqual(tree.check_match(("two", "three")), "two")
+        self.assertEqual(tree.check_match(("one",)), "")
+        self.assertEqual(tree.check_match(("two",)), "two")
+        self.assertEqual(tree.check_match(("three",)), "three")
+        self.assertEqual(tree.check_match([]), "")
 
 
     def test_match_identifier(self):
@@ -169,17 +169,17 @@ class TestMatching(unittest.TestCase):
         tree = cmdparser.parse_spec(spec, ident_factory=ident_factory)
         fields = {}
         self.assertEqual(tree.check_match(("one", "foo", "x", "a", "b"),
-                                          fields=fields), True)
+                                          fields=fields), None)
         self.assertEqual(fields, {"one": "one", "two": "foo", "three": "x",
                                   "four": "a b"})
         fields = {}
         self.assertEqual(tree.check_match(("one", "bar", "z", "baz"),
-                                          fields=fields), True)
+                                          fields=fields), None)
         self.assertEqual(fields, {"one": "one", "two": "bar", "three": "z",
                                   "four": "baz"})
-        self.assertEqual(tree.check_match(("one", "foo", "x")), False)
-        self.assertEqual(tree.check_match(("one", "foo", "w", "a")), False)
-        self.assertEqual(tree.check_match(("one", "x", "a")), False)
+        self.assertEqual(tree.check_match(("one", "foo", "x")), "")
+        self.assertEqual(tree.check_match(("one", "foo", "w", "a")), "w")
+        self.assertEqual(tree.check_match(("one", "x", "a")), "a")
 
 
     def test_match_full(self):
@@ -194,33 +194,33 @@ class TestMatching(unittest.TestCase):
         tree = cmdparser.parse_spec(spec, ident_factory=ident_factory)
         fields = {}
         self.assertEqual(tree.check_match(("one", "two", "three", "six",
-                                           "foo", "bar"), fields=fields), True)
+                                           "foo", "bar"), fields=fields), None)
         self.assertEqual(fields, {"one": "one", "two": "two", "three": "three",
                                   "six": "six", "eight": "foo bar"})
         fields = {}
         self.assertEqual(tree.check_match(("one", "four", "seven", "foo"),
-                                          fields=fields), True)
+                                          fields=fields), None)
         self.assertEqual(fields, {"one": "one", "four": "four",
                                   "seven": "seven", "eight": "foo"})
         fields = {}
         self.assertEqual(tree.check_match(("one", "four", "foo"),
-                                          fields=fields), True)
+                                          fields=fields), None)
         self.assertEqual(fields, {"one": "one", "four": "four", "eight": "foo"})
         fields = {}
         self.assertEqual(tree.check_match(("one", "four", "x", "foo", "bar"),
-                                          fields=fields), True)
+                                          fields=fields), None)
         self.assertEqual(fields, {"one": "one", "four": "four", "five": "x",
                                   "eight": "foo bar"})
 
-        self.assertEqual(tree.check_match(("one", "two", "foo")), False)
-        self.assertEqual(tree.check_match(("one", "four", "x")), False)
-        self.assertEqual(tree.check_match(("one", "four", "six")), False)
+        self.assertEqual(tree.check_match(("one", "two", "foo")), "foo")
+        self.assertEqual(tree.check_match(("one", "four", "x")), "")
+        self.assertEqual(tree.check_match(("one", "four", "six")), "")
 
 
 
 class TestCompletions(unittest.TestCase):
 
-    def test_match_sequence(self):
+    def test_complete_sequence(self):
         spec = "one two three"
         tree = cmdparser.parse_spec(spec)
         self.assertEqual(tree.get_completions(()), set(("one",)))
@@ -232,7 +232,7 @@ class TestCompletions(unittest.TestCase):
                          set())
 
 
-    def test_match_alternation(self):
+    def test_complete_alternation(self):
         spec = "(one | two | three)"
         tree = cmdparser.parse_spec(spec)
         self.assertEqual(tree.get_completions(()),
@@ -245,7 +245,7 @@ class TestCompletions(unittest.TestCase):
                          set())
 
 
-    def test_match_optional(self):
+    def test_complete_optional(self):
         spec = "one [two] three"
         tree = cmdparser.parse_spec(spec)
         self.assertEqual(tree.get_completions(()), set(("one",)))
@@ -259,7 +259,7 @@ class TestCompletions(unittest.TestCase):
                          set())
 
 
-    def test_match_identifier(self):
+    def test_complete_identifier(self):
         class XYZIdent(cmdparser.Token):
             def get_values(self):
                 return ["x", "y", "z"]
@@ -280,7 +280,7 @@ class TestCompletions(unittest.TestCase):
                          set())
 
 
-    def test_match_full(self):
+    def test_complete_full(self):
         class XYZIdent(cmdparser.Token):
             def get_values(self):
                 return ["x", "y", "z"]

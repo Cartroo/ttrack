@@ -1,6 +1,10 @@
 """cmdparser - A simple command parsing library."""
 
 
+import cmd
+import shlex
+
+
 class ParseError(Exception):
     """Error parsing command specification."""
     pass
@@ -79,19 +83,28 @@ class ParseItem(object):
 
         The default is to raise a MatchError, derived classes should override.
         """
-        raise MatchError()
+        raise MatchError(compare_items)
 
 
     def check_match(self, items, fields=None, trace=None):
-        """Return True if the specified command-line is valid and complete.
+        """Return None if the specified command-line is valid and complete.
+
+        If the command-line doesn't match, the first non-matching item is
+        returned, or the empty string if the command was incomplete.
 
         Calling code should typically use this instead of calling match()
         directly. Derived classes shouldn't typically override this method.
         """
         try:
-            return not self.match(items, fields=fields, trace=trace)
-        except MatchError:
-            return False
+            unparsed = self.match(items, fields=fields, trace=trace)
+            if not unparsed:
+                return None
+        except MatchError, e:
+            unparsed = e.args[0]
+        if unparsed:
+            return unparsed[0]
+        else:
+            return ""
 
 
     def get_completions(self, items):
@@ -189,16 +202,18 @@ class Alternation(ParseItem):
         """See ParseItem.match()."""
 
         tracer = CallTracer(trace, "Alternation")
+        remaining = compare_items
         for option in self.options:
             try:
                 return option.match(compare_items, fields=fields,
                                     completions=completions)
-            except MatchError:
-                pass
+            except MatchError, e:
+                if len(e.args[0]) < len(remaining):
+                    remaining = e.args[0]
         if self.optional:
             return compare_items
         else:
-            raise MatchError()
+            raise MatchError(remaining)
 
 
 
@@ -234,13 +249,13 @@ class Token(ParseItem):
         if not compare_items:
             if completions is not None:
                 completions.update(self.get_values())
-            raise MatchError()
+            raise MatchError([])
         for value in self.get_values():
             if compare_items and compare_items[0] == value:
                 if fields is not None:
                     fields[self.name] = value
                 return compare_items[1:]
-        raise MatchError()
+        raise MatchError(compare_items)
 
 
 
@@ -254,7 +269,7 @@ class AnyToken(ParseItem):
     def match(self, compare_items, fields=None, completions=None, trace=None):
         tracer = CallTracer(trace, "AnyToken(%s)" % (self.name,))
         if not compare_items:
-            raise MatchError()
+            raise MatchError([])
         if fields is not None:
             fields[self.name] = compare_items[0]
         return compare_items[1:]
@@ -271,7 +286,7 @@ class AnyTokenString(ParseItem):
     def match(self, compare_items, fields=None, completions=None, trace=None):
         tracer = CallTracer(trace, "AnyTokenString(%s)" % (self.name,))
         if not compare_items:
-            raise MatchError()
+            raise MatchError([])
         if fields is not None:
             fields[self.name] = " ".join(compare_items)
         return []
@@ -342,4 +357,90 @@ def parse_spec(spec, ident_factory=None):
     stack[-1].finalise()
     return stack.pop()
 
+
+
+def cmd_class_decorator(cls):
+    """Decorates a cmd.Cmd class and adds completion methods.
+
+    Any method which has been decorated with cmd_do_method_decorator() will
+    have a tag added which is detected by this class decorator, and the
+    appropriate completion methods added.
+    """
+
+    for method in dir(cls):
+        data_attr = getattr(method, "_cmdparser_data", None)
+        if data_attr is not None:
+            command_string, tree = data_attr
+            completer_method_name = "complete_" + command_string
+
+            def completer_method(self, text, line, begidx, endidx):
+                items = shlex.split(line[:begidx])
+                return [i for i in tree.get_completions(items)
+                        if i.startswith(text)]
+
+            setattr(cls, completer_method_name, completer_method)
+
+    return cls
+
+
+
+def cmd_do_method_decorator(method):
+    """Decorates a do_XXX method with command parsing code.
+
+    Also marks the method as requiring completion, suitable for the later
+    class decorator to insert a completion method.
+    """
+
+    # Work out command name.
+    if not method.func_name.startswith("do_"):
+        raise ParseError("method name %r invalid" % (method.func_name,))
+    command_string = method.func_name[3:]
+
+    # Retrieve command specification.
+    spec = ""
+    for spec_line in method.__doc__.splitlines():
+        if not spec_line:
+            if spec:
+                break
+            continue
+        spec += "\n" + spec_line.strip()
+
+    # TODO: Could easily re-flow the help text here, for example stripping
+    #       off any whitespace prefix beyond the first line.
+
+    # Flag commands with no command spec as an error.
+    if not spec:
+        raise ParseError("%s: no command spec found" % (method.func_name,))
+
+    # Convert specification into parse tree.
+    try:
+        tree = parse_spec(spec)
+        starts = tree.get_completions([])
+        if len(starts) != 1:
+            raise ParseError("command spec must have unique initial token")
+        token = starts.pop()
+        if token != command_string:
+            raise ParseError("command spec initial token %r must match command"
+                             " from method %r" % (token, command_string))
+    except ParseError, e:
+        raise ParseError("%s: %s" % (method.func_name, e))
+
+    # Build replacement method.
+    def do_wrapper(self, args):
+
+        split_args = [command_string] + shlex.split(args)
+        fields = {}
+        check = tree.check_match(split_args, fields=fields)
+        if check is None:
+            return method(self, split_args, fields)
+        else:
+            if check:
+                print "Invalid command (failed at %r)" % (check,)
+            else:
+                print "Incomplete command"
+
+    do_wrapper.__doc__ = method.__doc__
+    do_wrapper._cmdparser_data = (command_string, tree)
+
+    return do_wrapper
 
