@@ -1,7 +1,6 @@
 """cmdparser - A simple command parsing library."""
 
 
-import cmd
 import itertools
 import shlex
 
@@ -32,6 +31,11 @@ class CallTracer(object):
             self.trace.append("<<< " + self.name)
 
 
+    def fail(self, items):
+        if self.trace is not None:
+            self.trace.append("!! " + self.name + " [" + " ".join(items) + "]")
+
+
 
 class ParseItem(object):
     """Base class for all items in a command specification."""
@@ -51,6 +55,14 @@ class ParseItem(object):
 
     def add(self, child):
         """Called when a child item is added.
+
+        The default is to disallow children, derived classes can override.
+        """
+        raise ParseError("children not allowed")
+
+
+    def pop(self):
+        """Called to recover and remove the most recently-added child item.
 
         The default is to disallow children, derived classes can override.
         """
@@ -159,6 +171,15 @@ class Sequence(ParseItem):
         self.items.append(child)
 
 
+    def pop(self):
+        """See ParseItem.pop()."""
+
+        try:
+            return self.items.pop()
+        except IndexError:
+            raise ParseError("no child item to pop")
+
+
     def match(self, compare_items, fields=None, completions=None, trace=None,
               context=None):
         """See ParseItem.match()."""
@@ -169,6 +190,54 @@ class Sequence(ParseItem):
                                        completions=completions, trace=trace,
                                        context=context)
         return compare_items
+
+
+
+class Repeater(ParseItem):
+    """Matches a single specified item one or more times."""
+
+    def __init__(self):
+        self.item = None
+
+
+    def __str__(self):
+        return str(self.item) + " [...]"
+
+
+    def finalise(self):
+        """See ParseItem.finalise()."""
+        if self.item is None:
+            raise ParseError("empty repeater")
+
+
+    def add(self, child):
+        """See ParseItem.add()."""
+
+        assert isinstance(child, ParseItem)
+        if isinstance(child, Repeater) or isinstance(child, AnyTokenString):
+            raise ParseError("repeater cannot accept a repeating child")
+        if self.item is not None:
+            raise ParseError("repeater may only have a single child")
+        self.item = child
+
+
+    def match(self, compare_items, fields=None, completions=None, trace=None,
+              context=None):
+
+        tracer = CallTracer(trace, "Repeater")
+        repeats = 0
+        while True:
+            try:
+                new_items = self.item.match(compare_items, fields=fields,
+                                            completions=completions,
+                                            trace=trace, context=context)
+                compare_items = new_items
+                repeats += 1
+            except MatchError, e:
+                if repeats == 0:
+                    tracer.fail(e.args[0])
+                    raise
+                return compare_items
 
 
 
@@ -213,6 +282,12 @@ class Alternation(ParseItem):
         self.options[-1].add(child)
 
 
+    def pop(self):
+        """See ParseItem.pop()."""
+
+        return self.options[-1].pop()
+
+
     def add_alternate(self):
         """See ParseItem.add_alternate()."""
 
@@ -236,6 +311,7 @@ class Alternation(ParseItem):
         if self.optional:
             return compare_items
         else:
+            tracer.fail(remaining)
             raise MatchError(remaining)
 
 
@@ -277,12 +353,14 @@ class Token(ParseItem):
         if not compare_items:
             if completions is not None:
                 completions.update(self.get_values(context))
+            tracer.fail([])
             raise MatchError([])
         for value in self.get_values(context):
             if compare_items and compare_items[0] == value:
                 if fields is not None:
-                    fields[self.name] = value
+                    fields.setdefault(self.name, []).append(value)
                 return compare_items[1:]
+        tracer.fail(compare_items)
         raise MatchError(compare_items)
 
 
@@ -302,9 +380,10 @@ class AnyToken(ParseItem):
               context=None):
         tracer = CallTracer(trace, "AnyToken(%s)" % (self.name,))
         if not compare_items:
+            tracer.fail([])
             raise MatchError([])
         if fields is not None:
-            fields[self.name] = compare_items[0]
+            fields.setdefault(self.name, []).append(compare_items[0])
         return compare_items[1:]
 
 
@@ -324,9 +403,10 @@ class AnyTokenString(ParseItem):
               context=None):
         tracer = CallTracer(trace, "AnyTokenString(%s)" % (self.name,))
         if not compare_items:
+            tracer.fail([])
             raise MatchError([])
         if fields is not None:
-            fields[self.name] = " ".join(compare_items)
+            fields.setdefault(self.name, []).extend(compare_items)
         return []
 
 
@@ -337,8 +417,16 @@ def parse_spec(spec, ident_factory=None):
     token = ""
     name = None
     ident = False
+    skip_chars = 0
 
-    for num, char in enumerate(spec, 1):
+    for num, chars in ((i+1, spec[i:]) for i in xrange(len(spec))):
+
+        if skip_chars:
+            skip_chars -= 1
+            continue
+
+        # Most matching happens on only the first character.
+        char = chars[0]
 
         # Perform correctness checks.
         if ident and (char in ":()[]|<" or char.isspace()):
@@ -362,7 +450,20 @@ def parse_spec(spec, ident_factory=None):
         if char == "(":
             stack.append(Alternation())
         elif char == "[":
-            stack.append(Alternation(optional=True))
+            # String [...] is a special case meaning "optionally repeat last
+            # item". We recover the last item from the latest stack item
+            # and wrap it in a Repeater.
+            if chars[:5] == "[...]":
+                try:
+                    last_item = stack[-1].pop()
+                    repeater = Repeater()
+                    repeater.add(last_item)
+                    stack[-1].add(repeater)
+                    skip_chars = 4
+                except ParseError:
+                    raise ParseError("no token to repeat at char %d" % (num,))
+            else:
+                stack.append(Alternation(optional=True))
         elif char == "<":
             ident = True
         elif char == "|":

@@ -32,6 +32,18 @@ class TestParser(unittest.TestCase):
             self.assertEqual(item.items[0].name, spec_item)
 
 
+    def test_parse_repeat_token(self):
+        spec = "one two [...]"
+        tree = cmdparser.parse_spec(spec)
+        self.assertIsInstance(tree, cmdparser.Sequence)
+        self.assertEqual(len(tree.items), 2)
+        self.assertIsInstance(tree.items[0], cmdparser.Token)
+        self.assertEqual(tree.items[0].name, "one")
+        self.assertIsInstance(tree.items[1], cmdparser.Repeater)
+        self.assertIsInstance(tree.items[1].item, cmdparser.Token)
+        self.assertEqual(tree.items[1].item.name, "two")
+
+
     def test_parse_optional(self):
         spec = "one [two] three"
         tree = cmdparser.parse_spec(spec)
@@ -52,7 +64,7 @@ class TestParser(unittest.TestCase):
 
     def test_parse_identifier(self):
         class XYZIdent(cmdparser.Token):
-            def get_values(self):
+            def get_values(self, context):
                 return ["x", "y", "z"]
         def ident_factory(ident):
             if ident == "three":
@@ -74,7 +86,7 @@ class TestParser(unittest.TestCase):
 
     def test_parse_full(self):
         class XYZIdent(cmdparser.Token):
-            def get_values(self):
+            def get_values(self, context):
                 return ["x", "y", "z"]
         def ident_factory(ident):
             if ident == "five":
@@ -141,6 +153,34 @@ class TestMatching(unittest.TestCase):
         self.assertEqual(tree.check_match([]), "")
 
 
+    def test_match_repeat_token(self):
+        spec = "one two [...] three"
+        tree = cmdparser.parse_spec(spec)
+        self.assertEqual(tree.check_match(("one", "two", "three")), None)
+        fields = {}
+        self.assertEqual(tree.check_match(("one", "two", "two", "three"),
+                                          fields=fields), None)
+        self.assertEqual(fields, {"one": ["one"], "two": ["two", "two"],
+                         "three": ["three"]})
+        self.assertEqual(tree.check_match(("one", "two", "two", "two",
+                                           "three")), None)
+        self.assertEqual(tree.check_match(("one",)), "")
+        self.assertEqual(tree.check_match(("one", "three")), "three")
+        self.assertEqual(tree.check_match(("one", "two", "three", "two")),
+                         "two")
+
+
+    def test_match_repeat_sequence(self):
+        spec = "(one two) [...] three"
+        tree = cmdparser.parse_spec(spec)
+        self.assertEqual(tree.check_match(("one", "two", "three")), None)
+        self.assertEqual(tree.check_match(("one", "two", "one", "two",
+                                           "three")), None)
+        self.assertEqual(tree.check_match(("one", "two", "one", "three")),
+                         "one") # Fails on "one" is correct!
+        self.assertEqual(tree.check_match(("one", "two", "two")), "two")
+
+
     def test_match_optional(self):
         spec = "one [two] three"
         tree = cmdparser.parse_spec(spec)
@@ -159,7 +199,7 @@ class TestMatching(unittest.TestCase):
 
     def test_match_identifier(self):
         class XYZIdent(cmdparser.Token):
-            def get_values(self):
+            def get_values(self, context):
                 return ["x", "y", "z"]
         def ident_factory(ident):
             if ident == "three":
@@ -170,13 +210,13 @@ class TestMatching(unittest.TestCase):
         fields = {}
         self.assertEqual(tree.check_match(("one", "foo", "x", "a", "b"),
                                           fields=fields), None)
-        self.assertEqual(fields, {"one": "one", "two": "foo", "three": "x",
-                                  "four": "a b"})
+        self.assertEqual(fields, {"one": ["one"], "two": ["foo"],
+                                  "three": ["x"], "four": ["a", "b"]})
         fields = {}
         self.assertEqual(tree.check_match(("one", "bar", "z", "baz"),
                                           fields=fields), None)
-        self.assertEqual(fields, {"one": "one", "two": "bar", "three": "z",
-                                  "four": "baz"})
+        self.assertEqual(fields, {"one": ["one"], "two": ["bar"],
+                                  "three": ["z"], "four": ["baz"]})
         self.assertEqual(tree.check_match(("one", "foo", "x")), "")
         self.assertEqual(tree.check_match(("one", "foo", "w", "a")), "w")
         self.assertEqual(tree.check_match(("one", "x", "a")), "a")
@@ -184,7 +224,7 @@ class TestMatching(unittest.TestCase):
 
     def test_match_full(self):
         class XYZIdent(cmdparser.Token):
-            def get_values(self):
+            def get_values(self, context):
                 return ["x", "y", "z"]
         def ident_factory(ident):
             if ident == "five":
@@ -195,22 +235,24 @@ class TestMatching(unittest.TestCase):
         fields = {}
         self.assertEqual(tree.check_match(("one", "two", "three", "six",
                                            "foo", "bar"), fields=fields), None)
-        self.assertEqual(fields, {"one": "one", "two": "two", "three": "three",
-                                  "six": "six", "eight": "foo bar"})
+        self.assertEqual(fields, {"one": ["one"], "two": ["two"],
+                                  "three": ["three"], "six": ["six"],
+                                  "eight": ["foo", "bar"]})
         fields = {}
         self.assertEqual(tree.check_match(("one", "four", "seven", "foo"),
                                           fields=fields), None)
-        self.assertEqual(fields, {"one": "one", "four": "four",
-                                  "seven": "seven", "eight": "foo"})
+        self.assertEqual(fields, {"one": ["one"], "four": ["four"],
+                                  "seven": ["seven"], "eight": ["foo"]})
         fields = {}
         self.assertEqual(tree.check_match(("one", "four", "foo"),
                                           fields=fields), None)
-        self.assertEqual(fields, {"one": "one", "four": "four", "eight": "foo"})
+        self.assertEqual(fields, {"one": ["one"], "four": ["four"],
+                                  "eight": ["foo"]})
         fields = {}
         self.assertEqual(tree.check_match(("one", "four", "x", "foo", "bar"),
                                           fields=fields), None)
-        self.assertEqual(fields, {"one": "one", "four": "four", "five": "x",
-                                  "eight": "foo bar"})
+        self.assertEqual(fields, {"one": ["one"], "four": ["four"],
+                                  "five": ["x"], "eight": ["foo", "bar"]})
 
         self.assertEqual(tree.check_match(("one", "two", "foo")), "foo")
         self.assertEqual(tree.check_match(("one", "four", "x")), "")
@@ -245,6 +287,16 @@ class TestCompletions(unittest.TestCase):
                          set())
 
 
+    def test_complete_repeat_token(self):
+        spec = "one two [...]"
+        tree = cmdparser.parse_spec(spec)
+        self.assertEqual(tree.get_completions(()), set(("one",)))
+        self.assertEqual(tree.get_completions(("one",)), set(("two",)))
+        self.assertEqual(tree.get_completions(("one", "two")), set(("two",)))
+        self.assertEqual(tree.get_completions(("one", "two", "two")),
+                         set(("two",)))
+
+
     def test_complete_optional(self):
         spec = "one [two] three"
         tree = cmdparser.parse_spec(spec)
@@ -261,7 +313,7 @@ class TestCompletions(unittest.TestCase):
 
     def test_complete_identifier(self):
         class XYZIdent(cmdparser.Token):
-            def get_values(self):
+            def get_values(self, context):
                 return ["x", "y", "z"]
         def ident_factory(ident):
             if ident == "three":
@@ -282,7 +334,7 @@ class TestCompletions(unittest.TestCase):
 
     def test_complete_full(self):
         class XYZIdent(cmdparser.Token):
-            def get_values(self):
+            def get_values(self, context):
                 return ["x", "y", "z"]
         def ident_factory(ident):
             if ident == "five":
