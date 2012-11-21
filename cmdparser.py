@@ -2,6 +2,7 @@
 
 
 import cmd
+import itertools
 import shlex
 
 
@@ -64,7 +65,8 @@ class ParseItem(object):
         raise ParseError("alternates not allowed")
 
 
-    def match(self, compare_items, fields=None, completions=None, trace=None):
+    def match(self, compare_items, fields=None, completions=None, trace=None,
+              context=None):
         """Called during the match process.
 
         Should attempt to match item's specification against command-line
@@ -85,12 +87,15 @@ class ParseItem(object):
         match() function is entered or left, a string representing it
         is appended to the list.
 
+        The context argument is reflected down through all calls to match()
+        methods so application-provided tokens can use it.
+
         The default is to raise a MatchError, derived classes should override.
         """
         raise MatchError(compare_items)
 
 
-    def check_match(self, items, fields=None, trace=None):
+    def check_match(self, items, fields=None, trace=None, context=None):
         """Return None if the specified command-line is valid and complete.
 
         If the command-line doesn't match, the first non-matching item is
@@ -100,7 +105,8 @@ class ParseItem(object):
         directly. Derived classes shouldn't typically override this method.
         """
         try:
-            unparsed = self.match(items, fields=fields, trace=trace)
+            unparsed = self.match(items, fields=fields, trace=trace,
+                                  context=context)
             if not unparsed:
                 return None
         except MatchError, e:
@@ -111,7 +117,7 @@ class ParseItem(object):
             return ""
 
 
-    def get_completions(self, items):
+    def get_completions(self, items, context=None):
         """Return set of valid tokens to follow partial command-line in items.
 
         Calling code should typically use this instead of calling match()
@@ -119,7 +125,7 @@ class ParseItem(object):
         """
         try:
             completions = set()
-            self.match(items, completions=completions)
+            self.match(items, completions=completions, context=context)
         except MatchError:
             pass
         return completions
@@ -153,13 +159,15 @@ class Sequence(ParseItem):
         self.items.append(child)
 
 
-    def match(self, compare_items, fields=None, completions=None, trace=None):
+    def match(self, compare_items, fields=None, completions=None, trace=None,
+              context=None):
         """See ParseItem.match()."""
 
         tracer = CallTracer(trace, "Sequence")
         for item in self.items:
             compare_items = item.match(compare_items, fields=fields,
-                                       completions=completions)
+                                       completions=completions, trace=trace,
+                                       context=context)
         return compare_items
 
 
@@ -185,7 +193,8 @@ class Alternation(ParseItem):
 
 
     def __str__(self):
-        return "( " + " | ".join(str(i) for i in self.options) + " )"
+        seps = "[]" if self.optional else "()"
+        return seps[0] + "|".join(str(i) for i in self.options) + seps[1]
 
 
     def finalise(self):
@@ -210,7 +219,8 @@ class Alternation(ParseItem):
         self.options.append(Sequence())
 
 
-    def match(self, compare_items, fields=None, completions=None, trace=None):
+    def match(self, compare_items, fields=None, completions=None, trace=None,
+              context=None):
         """See ParseItem.match()."""
 
         tracer = CallTracer(trace, "Alternation")
@@ -218,7 +228,8 @@ class Alternation(ParseItem):
         for option in self.options:
             try:
                 return option.match(compare_items, fields=fields,
-                                    completions=completions)
+                                    completions=completions,
+                                    trace=trace, context=context)
             except MatchError, e:
                 if len(e.args[0]) < len(remaining):
                     remaining = e.args[0]
@@ -247,7 +258,7 @@ class Token(ParseItem):
         return self.token
 
 
-    def get_values(self):
+    def get_values(self, context):
         """Return the current list of valid tokens.
 
         Derived classes should override this method to return the full list of
@@ -258,15 +269,16 @@ class Token(ParseItem):
         return [self.token]
 
 
-    def match(self, compare_items, fields=None, completions=None, trace=None):
+    def match(self, compare_items, fields=None, completions=None, trace=None,
+              context=None):
         """See ParseItem.match()."""
 
         tracer = CallTracer(trace, "Token(%s)" % (self.name,))
         if not compare_items:
             if completions is not None:
-                completions.update(self.get_values())
+                completions.update(self.get_values(context))
             raise MatchError([])
-        for value in self.get_values():
+        for value in self.get_values(context):
             if compare_items and compare_items[0] == value:
                 if fields is not None:
                     fields[self.name] = value
@@ -286,7 +298,8 @@ class AnyToken(ParseItem):
         return "<" + self.name + ">"
 
 
-    def match(self, compare_items, fields=None, completions=None, trace=None):
+    def match(self, compare_items, fields=None, completions=None, trace=None,
+              context=None):
         tracer = CallTracer(trace, "AnyToken(%s)" % (self.name,))
         if not compare_items:
             raise MatchError([])
@@ -307,7 +320,8 @@ class AnyTokenString(ParseItem):
         return "<" + self.name + "...>"
 
 
-    def match(self, compare_items, fields=None, completions=None, trace=None):
+    def match(self, compare_items, fields=None, completions=None, trace=None,
+              context=None):
         tracer = CallTracer(trace, "AnyTokenString(%s)" % (self.name,))
         if not compare_items:
             raise MatchError([])
@@ -383,18 +397,7 @@ def parse_spec(spec, ident_factory=None):
 
 
 
-def get_completer(tree):
-
-    def completer_method(self, text, line, begidx, endidx):
-        items = shlex.split(line[:begidx])
-        return [i for i in tree.get_completions(items)
-                if i.startswith(text)]
-
-    return completer_method
-
-
-
-def cmd_class_decorator(cls):
+class CmdClassDecorator(object):
     """Decorates a cmd.Cmd class and adds completion methods.
 
     Any method which has been decorated with cmd_do_method_decorator() will
@@ -402,94 +405,140 @@ def cmd_class_decorator(cls):
     appropriate completion methods added.
     """
 
-    for method in dir(cls):
-        method_attr = getattr(cls, method)
-        data_attr = getattr(method_attr, "_cmdparser_data", None)
-        if data_attr is not None:
-            command_string, tree = data_attr
-            setattr(cls, "complete_" + command_string, get_completer(tree))
+    def __call__(self, cls):
 
-    return cls
+        for method in dir(cls):
+            method_attr = getattr(cls, method)
+            method_dec = getattr(method_attr, "_cmdparser_decorator", None)
+            if method_dec is not None:
+                # Note: it's important that the method creation is delegated
+                #       to a so that each completer gets its own closure.
+                method_dec.add_completer(cls)
+
+        return cls
 
 
 
-def cmd_do_method_decorator(method):
+class CmdMethodDecorator(object):
     """Decorates a do_XXX method with command parsing code.
 
     Also marks the method as requiring completion, suitable for the later
     class decorator to insert a completion method.
     """
 
-    # Work out command name.
-    if not method.func_name.startswith("do_"):
-        raise ParseError("method name %r invalid" % (method.func_name,))
-    command_string = method.func_name[3:]
+    def __init__(self, token_factory=None):
 
-    # Retrieve command specification.
-    spec = ""
-    in_spec = True
-    initial_line = True
-    leading_indent = None
-    new_doc = []
-    for spec_line in method.__doc__.splitlines():
-        # Remove leading blank lines
-        if not new_doc and not spec_line:
-            initial_line = False
-            continue
-        # Except initial line, strip leading whitespace of first such line.
-        if initial_line:
-            initial_line = False
-        elif not spec_line.strip():
-            spec_line = ""
-        else:
-            if leading_indent == None:
-                leading_indent = len(spec_line) - len(spec_line.lstrip())
-            spec_line = spec_line[leading_indent:]
-        new_doc.append(spec_line)
+        self.token_factory = token_factory
+        self.parse_tree = None
+        self.command_string = None
+        self.new_docstring = None
 
-        if in_spec:
-            if spec_line:
-                spec += "\n" + spec_line.strip()
+
+    def __call__(self, method):
+
+        # Work out command name.
+        if not method.func_name.startswith("do_"):
+            raise ParseError("method name %r doesn't start 'do_'"
+                             % (method.func_name,))
+        self.command_string = method.func_name[3:]
+
+        # Parse method doc string to obtain parse tree and reformatted
+        # docstring.
+        self.parse_docstring(method.__doc__)
+
+        # Build replacement method.
+        def wrapper(cmd_self, args):
+
+            split_args = [self.command_string] + shlex.split(args)
+            fields = {}
+            check = self.parse_tree.check_match(split_args, fields=fields,
+                                                context=cmd_self)
+            if check is None:
+                return method(cmd_self, split_args, fields)
             else:
-                in_spec = False
+                if check:
+                    print "Invalid command (unrecognised from %r)" % (check,)
+                else:
+                    print "Incomplete command"
+                print "Expected syntax: %s" % (self.parse_tree,)
 
-    # Strip trailing blank lines.
-    while new_doc and not new_doc[-1]:
-        new_doc.pop()
+        # Ensure wrapper has correct docstring, and also store away the parse
+        # tree for the class wrapper to use for building completer methods.
+        wrapper.__doc__ = self.new_docstring
+        wrapper._cmdparser_decorator = self
 
-    # Flag commands with no command spec as an error.
-    if not spec:
-        raise ParseError("%s: no command spec found" % (method.func_name,))
+        return wrapper
 
-    # Convert specification into parse tree.
-    try:
-        tree = parse_spec(spec)
-        starts = tree.get_completions([])
-        if len(starts) != 1:
-            raise ParseError("command spec must have unique initial token")
-        token = starts.pop()
-        if token != command_string:
-            raise ParseError("command spec initial token %r must match command"
-                             " from method %r" % (token, command_string))
-    except ParseError, e:
-        raise ParseError("%s: %s" % (method.func_name, e))
 
-    # Build replacement method.
-    def do_wrapper(self, args):
+    def parse_docstring(self, docstring):
+        """Parse method docsstring and return (parse_tree, new_docstring)."""
 
-        split_args = [command_string] + shlex.split(args)
-        fields = {}
-        check = tree.check_match(split_args, fields=fields)
-        if check is None:
-            return method(self, split_args, fields)
-        else:
-            if check:
-                print "Invalid command (failed at %r)" % (check,)
-            else:
-                print "Incomplete command"
+        # Reflow docstring to remove unnecessary whitespace.
+        common_indent = None
+        new_doc = []
 
-    do_wrapper.__doc__ = "\n".join(new_doc)
-    do_wrapper._cmdparser_data = (command_string, tree)
+        for doc_line in docstring.splitlines():
+            # Convert whitespace-only lines to empty lines and strip trailing
+            # whitespace.
+            doc_line = doc_line.rstrip()
+            stripped = doc_line.lstrip()
+            if not stripped:
+                doc_line = ""
+                # Collapse consecutive blank lines.
+                if new_doc and not new_doc[-1]:
+                    continue
+            elif new_doc:
+                # Track minimum indentation of any line save the first.
+                indent = len(doc_line) - len(stripped)
+                if common_indent is None or indent < common_indent:
+                    common_indent = indent
 
-    return do_wrapper
+            # Add line to new docstring list, collapsing consecutive blanks.
+            new_doc.append(doc_line)
+
+        # Strip leading and trailing blank lines, and trim off common
+        # whitespace from all but initial line.
+        if common_indent is not None:
+            new_doc = [new_doc[0]] + [i[common_indent:] for i in new_doc[1:]]
+        while new_doc and not new_doc[0]:
+            new_doc.pop(0)
+        while new_doc and not new_doc[-1]:
+            new_doc.pop()
+
+        # Store updated docstring.
+        self.new_docstring = "\n".join(new_doc)
+
+        # Build spec and flag commands with no command spec as an error.
+        spec = " ".join(itertools.takewhile(lambda x: x, new_doc))
+        if not spec:
+            raise ParseError("%s: no command spec" % (self.command_string,))
+
+        # Convert specification into parse tree.
+        try:
+            tree = parse_spec(spec, ident_factory=self.token_factory)
+            starts = tree.get_completions([])
+            if len(starts) != 1:
+                raise ParseError("command spec must have unique initial token")
+            token = starts.pop()
+            if token != self.command_string:
+                raise ParseError("%s: command spec initial token %r must match"
+                                 " command" % (self.command_string, token))
+        except ParseError, e:
+            raise ParseError("%s: %s" % (self.command_string, e))
+
+        # Store parse tree.
+        self.parse_tree = tree
+
+
+    def add_completer(self, cls):
+        """Create completion function for this command and add it to class."""
+
+        def completer_method(cmd_self, text, line, begidx, endidx):
+            items = shlex.split(line[:begidx])
+            completions = self.parse_tree.get_completions(items,
+                                                          context=cmd_self)
+            return [i for i in completions if i.startswith(text)]
+
+        setattr(cls, "complete_" + self.command_string, completer_method)
+
 
