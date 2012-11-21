@@ -35,6 +35,10 @@ class CallTracer(object):
 class ParseItem(object):
     """Base class for all items in a command specification."""
 
+    def __str__(self):
+        raise NotImplementedError()
+
+
     def finalise(self):
         """Called when an object is final.
 
@@ -129,6 +133,10 @@ class Sequence(ParseItem):
         self.items = []
 
 
+    def __str__(self):
+        return " ".join(str(i) for i in self.items)
+
+
     def finalise(self):
         """See ParseItem.finalise()."""
 
@@ -174,6 +182,10 @@ class Alternation(ParseItem):
         self.optional = optional
         self.options = []
         self.add_alternate()
+
+
+    def __str__(self):
+        return "( " + " | ".join(str(i) for i in self.options) + " )"
 
 
     def finalise(self):
@@ -231,6 +243,10 @@ class Token(ParseItem):
         self.token = name if token is None else token
 
 
+    def __str__(self):
+        return self.token
+
+
     def get_values(self):
         """Return the current list of valid tokens.
 
@@ -266,6 +282,10 @@ class AnyToken(ParseItem):
         self.name = name
 
 
+    def __str__(self):
+        return "<" + self.name + ">"
+
+
     def match(self, compare_items, fields=None, completions=None, trace=None):
         tracer = CallTracer(trace, "AnyToken(%s)" % (self.name,))
         if not compare_items:
@@ -281,6 +301,10 @@ class AnyTokenString(ParseItem):
 
     def __init__(self, name):
         self.name = name
+
+
+    def __str__(self):
+        return "<" + self.name + "...>"
 
 
     def match(self, compare_items, fields=None, completions=None, trace=None):
@@ -359,6 +383,17 @@ def parse_spec(spec, ident_factory=None):
 
 
 
+def get_completer(tree):
+
+    def completer_method(self, text, line, begidx, endidx):
+        items = shlex.split(line[:begidx])
+        return [i for i in tree.get_completions(items)
+                if i.startswith(text)]
+
+    return completer_method
+
+
+
 def cmd_class_decorator(cls):
     """Decorates a cmd.Cmd class and adds completion methods.
 
@@ -368,17 +403,11 @@ def cmd_class_decorator(cls):
     """
 
     for method in dir(cls):
-        data_attr = getattr(method, "_cmdparser_data", None)
+        method_attr = getattr(cls, method)
+        data_attr = getattr(method_attr, "_cmdparser_data", None)
         if data_attr is not None:
             command_string, tree = data_attr
-            completer_method_name = "complete_" + command_string
-
-            def completer_method(self, text, line, begidx, endidx):
-                items = shlex.split(line[:begidx])
-                return [i for i in tree.get_completions(items)
-                        if i.startswith(text)]
-
-            setattr(cls, completer_method_name, completer_method)
+            setattr(cls, "complete_" + command_string, get_completer(tree))
 
     return cls
 
@@ -398,15 +427,35 @@ def cmd_do_method_decorator(method):
 
     # Retrieve command specification.
     spec = ""
+    in_spec = True
+    initial_line = True
+    leading_indent = None
+    new_doc = []
     for spec_line in method.__doc__.splitlines():
-        if not spec_line:
-            if spec:
-                break
+        # Remove leading blank lines
+        if not new_doc and not spec_line:
+            initial_line = False
             continue
-        spec += "\n" + spec_line.strip()
+        # Except initial line, strip leading whitespace of first such line.
+        if initial_line:
+            initial_line = False
+        elif not spec_line.strip():
+            spec_line = ""
+        else:
+            if leading_indent == None:
+                leading_indent = len(spec_line) - len(spec_line.lstrip())
+            spec_line = spec_line[leading_indent:]
+        new_doc.append(spec_line)
 
-    # TODO: Could easily re-flow the help text here, for example stripping
-    #       off any whitespace prefix beyond the first line.
+        if in_spec:
+            if spec_line:
+                spec += "\n" + spec_line.strip()
+            else:
+                in_spec = False
+
+    # Strip trailing blank lines.
+    while new_doc and not new_doc[-1]:
+        new_doc.pop()
 
     # Flag commands with no command spec as an error.
     if not spec:
@@ -439,7 +488,7 @@ def cmd_do_method_decorator(method):
             else:
                 print "Incomplete command"
 
-    do_wrapper.__doc__ = method.__doc__
+    do_wrapper.__doc__ = "\n".join(new_doc)
     do_wrapper._cmdparser_data = (command_string, tree)
 
     return do_wrapper
