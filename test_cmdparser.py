@@ -132,13 +132,19 @@ class TestMatching(unittest.TestCase):
         spec = "one two three"
         tree = cmdparser.parse_spec(spec)
         self.assertEqual(tree.check_match(("one", "two", "three")), None)
-        self.assertEqual(tree.check_match(("one", "two")), "")
-        self.assertEqual(tree.check_match(("two", "three")), "two")
-        self.assertEqual(tree.check_match(("one", "three")), "three")
-        self.assertEqual(tree.check_match(("two", "one", "three")), "two")
-        self.assertEqual(tree.check_match(("one", "two", "threeX")), "threeX")
-        self.assertEqual(tree.check_match(("one", "two", "thre")), "thre")
-        self.assertEqual(tree.check_match([]), "")
+        self.assertRegexpMatches(tree.check_match(("one", "two")),
+                                 "insufficient args")
+        self.assertRegexpMatches(tree.check_match(("two", "three")),
+                                 "doesn't match")
+        self.assertRegexpMatches(tree.check_match(("one", "three")),
+                                 "doesn't match")
+        self.assertRegexpMatches(tree.check_match(("two", "one", "three")),
+                                 "doesn't match")
+        self.assertRegexpMatches(tree.check_match(("one", "two", "threeX")),
+                                 "doesn't match")
+        self.assertRegexpMatches(tree.check_match(("one", "two", "thre")),
+                                 "doesn't match")
+        self.assertRegexpMatches(tree.check_match([]), "insufficient args")
 
 
     def test_match_alternation(self):
@@ -147,10 +153,13 @@ class TestMatching(unittest.TestCase):
         self.assertEqual(tree.check_match(("one",)), None)
         self.assertEqual(tree.check_match(("two",)), None)
         self.assertEqual(tree.check_match(("three",)), None)
-        self.assertEqual(tree.check_match(("one", "two")), "two")
-        self.assertEqual(tree.check_match(("one", "one")), "one")
-        self.assertEqual(tree.check_match(("one", "two", "three")), "two")
-        self.assertEqual(tree.check_match([]), "")
+        self.assertRegexpMatches(tree.check_match(("one", "two")),
+                         "unused parameters")
+        self.assertRegexpMatches(tree.check_match(("one", "one")),
+                         "unused parameters")
+        self.assertRegexpMatches(tree.check_match(("one", "two", "three")),
+                         "unused parameters")
+        self.assertRegexpMatches(tree.check_match([]), "insufficient args")
 
 
     def test_match_repeat_token(self):
@@ -164,10 +173,12 @@ class TestMatching(unittest.TestCase):
                          "three": ["three"]})
         self.assertEqual(tree.check_match(("one", "two", "two", "two",
                                            "three")), None)
-        self.assertEqual(tree.check_match(("one",)), "")
-        self.assertEqual(tree.check_match(("one", "three")), "three")
-        self.assertEqual(tree.check_match(("one", "two", "three", "two")),
-                         "two")
+        self.assertRegexpMatches(tree.check_match(("one",)),
+                                 "insufficient args")
+        self.assertRegexpMatches(tree.check_match(("one", "three")),
+                                 "doesn't match")
+        self.assertRegexpMatches(tree.check_match(("one", "two", "three", "two")),
+                                 "unused parameters")
 
 
     def test_match_repeat_sequence(self):
@@ -176,9 +187,10 @@ class TestMatching(unittest.TestCase):
         self.assertEqual(tree.check_match(("one", "two", "three")), None)
         self.assertEqual(tree.check_match(("one", "two", "one", "two",
                                            "three")), None)
-        self.assertEqual(tree.check_match(("one", "two", "one", "three")),
-                         "one") # Fails on "one" is correct!
-        self.assertEqual(tree.check_match(("one", "two", "two")), "two")
+        self.assertRegexpMatches(tree.check_match(("one", "two", "one", "three")),
+                         "doesn't match")
+        self.assertRegexpMatches(tree.check_match(("one", "two", "two")),
+                         "doesn't match")
 
 
     def test_match_optional(self):
@@ -186,15 +198,23 @@ class TestMatching(unittest.TestCase):
         tree = cmdparser.parse_spec(spec)
         self.assertEqual(tree.check_match(("one", "three")), None)
         self.assertEqual(tree.check_match(("one", "two", "three")), None)
-        self.assertEqual(tree.check_match(("one", "twoX", "three")), "twoX")
-        self.assertEqual(tree.check_match(("one", "two")), "")
-        self.assertEqual(tree.check_match(("one", "three", "two")), "two")
-        self.assertEqual(tree.check_match(("two", "one", "three")), "two")
-        self.assertEqual(tree.check_match(("two", "three")), "two")
-        self.assertEqual(tree.check_match(("one",)), "")
-        self.assertEqual(tree.check_match(("two",)), "two")
-        self.assertEqual(tree.check_match(("three",)), "three")
-        self.assertEqual(tree.check_match([]), "")
+        self.assertRegexpMatches(tree.check_match(("one", "twoX", "three")),
+                                 "doesn't match")
+        self.assertRegexpMatches(tree.check_match(("one", "two")),
+                                 "insufficient args")
+        self.assertRegexpMatches(tree.check_match(("one", "three", "two")),
+                                 "unused parameters")
+        self.assertRegexpMatches(tree.check_match(("two", "one", "three")),
+                                 "doesn't match")
+        self.assertRegexpMatches(tree.check_match(("two", "three")),
+                                 "doesn't match")
+        self.assertRegexpMatches(tree.check_match(("one",)),
+                                 "insufficient args")
+        self.assertRegexpMatches(tree.check_match(("two",)),
+                                 "doesn't match")
+        self.assertRegexpMatches(tree.check_match(("three",)),
+                                 "doesn't match")
+        self.assertRegexpMatches(tree.check_match([]), "insufficient args")
 
 
     def test_match_identifier(self):
@@ -210,16 +230,19 @@ class TestMatching(unittest.TestCase):
         fields = {}
         self.assertEqual(tree.check_match(("one", "foo", "x", "a", "b"),
                                           fields=fields), None)
-        self.assertEqual(fields, {"one": ["one"], "two": ["foo"],
-                                  "three": ["x"], "four": ["a", "b"]})
+        self.assertEqual(fields, {"one": ["one"], "<two>": ["foo"],
+                                  "<three>": ["x"], "<four...>": ["a", "b"]})
         fields = {}
         self.assertEqual(tree.check_match(("one", "bar", "z", "baz"),
                                           fields=fields), None)
-        self.assertEqual(fields, {"one": ["one"], "two": ["bar"],
-                                  "three": ["z"], "four": ["baz"]})
-        self.assertEqual(tree.check_match(("one", "foo", "x")), "")
-        self.assertEqual(tree.check_match(("one", "foo", "w", "a")), "w")
-        self.assertEqual(tree.check_match(("one", "x", "a")), "a")
+        self.assertEqual(fields, {"one": ["one"], "<two>": ["bar"],
+                                  "<three>": ["z"], "<four...>": ["baz"]})
+        self.assertRegexpMatches(tree.check_match(("one", "foo", "x")),
+                                 "insufficient args")
+        self.assertRegexpMatches(tree.check_match(("one", "foo", "w", "a")),
+                                 "doesn't match")
+        self.assertRegexpMatches(tree.check_match(("one", "x", "a")),
+                                 "doesn't match")
 
 
     def test_match_full(self):
@@ -237,26 +260,29 @@ class TestMatching(unittest.TestCase):
                                            "foo", "bar"), fields=fields), None)
         self.assertEqual(fields, {"one": ["one"], "two": ["two"],
                                   "three": ["three"], "six": ["six"],
-                                  "eight": ["foo", "bar"]})
+                                  "<eight...>": ["foo", "bar"]})
         fields = {}
         self.assertEqual(tree.check_match(("one", "four", "seven", "foo"),
                                           fields=fields), None)
         self.assertEqual(fields, {"one": ["one"], "four": ["four"],
-                                  "seven": ["seven"], "eight": ["foo"]})
+                                  "seven": ["seven"], "<eight...>": ["foo"]})
         fields = {}
         self.assertEqual(tree.check_match(("one", "four", "foo"),
                                           fields=fields), None)
         self.assertEqual(fields, {"one": ["one"], "four": ["four"],
-                                  "eight": ["foo"]})
+                                  "<eight...>": ["foo"]})
         fields = {}
         self.assertEqual(tree.check_match(("one", "four", "x", "foo", "bar"),
                                           fields=fields), None)
         self.assertEqual(fields, {"one": ["one"], "four": ["four"],
-                                  "five": ["x"], "eight": ["foo", "bar"]})
+                                  "<five>": ["x"], "<eight...>": ["foo", "bar"]})
 
-        self.assertEqual(tree.check_match(("one", "two", "foo")), "foo")
-        self.assertEqual(tree.check_match(("one", "four", "x")), "")
-        self.assertEqual(tree.check_match(("one", "four", "six")), "")
+        self.assertRegexpMatches(tree.check_match(("one", "two", "foo")),
+                                 "doesn't match")
+        self.assertRegexpMatches(tree.check_match(("one", "four", "x")),
+                         "insufficient args")
+        self.assertRegexpMatches(tree.check_match(("one", "four", "six")),
+                         "insufficient args")
 
 
 

@@ -19,11 +19,11 @@ class MatchError(Exception):
 
 class CallTracer(object):
 
-    def __init__(self, trace, name):
+    def __init__(self, trace, parse_item, items):
         self.trace = trace
-        self.name = name
+        self.name = parse_item.__class__.__name__ + "(" + str(parse_item) + ")"
         if trace is not None:
-            trace.append(">>> " + name)
+            trace.append(">>> " + self.name + ": " + repr(items))
 
 
     def __del__(self):
@@ -104,7 +104,7 @@ class ParseItem(object):
 
         The default is to raise a MatchError, derived classes should override.
         """
-        raise MatchError(compare_items)
+        raise MatchError("invalid use of ParseItem (programming error)")
 
 
     def check_match(self, items, fields=None, trace=None, context=None):
@@ -119,14 +119,12 @@ class ParseItem(object):
         try:
             unparsed = self.match(items, fields=fields, trace=trace,
                                   context=context)
-            if not unparsed:
+            if unparsed:
+                return "unused parameters from %r onwards" % (unparsed[0],)
+            else:
                 return None
         except MatchError, e:
-            unparsed = e.args[0]
-        if unparsed:
-            return unparsed[0]
-        else:
-            return ""
+            return str(e)
 
 
     def get_completions(self, items, context=None):
@@ -184,7 +182,7 @@ class Sequence(ParseItem):
               context=None):
         """See ParseItem.match()."""
 
-        tracer = CallTracer(trace, "Sequence")
+        tracer = CallTracer(trace, self, compare_items)
         for item in self.items:
             compare_items = item.match(compare_items, fields=fields,
                                        completions=completions, trace=trace,
@@ -224,7 +222,7 @@ class Repeater(ParseItem):
     def match(self, compare_items, fields=None, completions=None, trace=None,
               context=None):
 
-        tracer = CallTracer(trace, "Repeater")
+        tracer = CallTracer(trace, self, compare_items)
         repeats = 0
         while True:
             try:
@@ -298,21 +296,20 @@ class Alternation(ParseItem):
               context=None):
         """See ParseItem.match()."""
 
-        tracer = CallTracer(trace, "Alternation")
-        remaining = compare_items
+        tracer = CallTracer(trace, self, compare_items)
+        errors = set()
         for option in self.options:
             try:
                 return option.match(compare_items, fields=fields,
                                     completions=completions,
                                     trace=trace, context=context)
             except MatchError, e:
-                if len(e.args[0]) < len(remaining):
-                    remaining = e.args[0]
+                errors.add(str(e))
         if self.optional:
             return compare_items
         else:
-            tracer.fail(remaining)
-            raise MatchError(remaining)
+            tracer.fail(compare_items)
+            raise MatchError(" and ".join(errors))
 
 
 
@@ -331,7 +328,14 @@ class Token(ParseItem):
 
 
     def __str__(self):
-        return self.token
+        # Slightly clumsy, but alter the return value depending on whether a
+        # derived class has overridden get_values(). This is partly to make
+        # life easier for clients of the library, and partly because some
+        # people may simply forget to override __str__().
+        if self.get_values.im_func == Token.get_values.im_func:
+            return self.token
+        else:
+            return "<" + self.name + ">"
 
 
     def get_values(self, context):
@@ -349,19 +353,19 @@ class Token(ParseItem):
               context=None):
         """See ParseItem.match()."""
 
-        tracer = CallTracer(trace, "Token(%s)" % (self.name,))
+        tracer = CallTracer(trace, self, compare_items)
         if not compare_items:
             if completions is not None:
                 completions.update(self.get_values(context))
             tracer.fail([])
-            raise MatchError([])
+            raise MatchError("insufficient args for %r" % (str(self),))
         for value in self.get_values(context):
-            if compare_items and compare_items[0] == value:
+            if compare_items[0] == value:
                 if fields is not None:
-                    fields.setdefault(self.name, []).append(value)
+                    fields.setdefault(str(self), []).append(value)
                 return compare_items[1:]
         tracer.fail(compare_items)
-        raise MatchError(compare_items)
+        raise MatchError("%r doesn't match %r" % (compare_items[0], str(self)))
 
 
 
@@ -376,14 +380,21 @@ class AnyToken(ParseItem):
         return "<" + self.name + ">"
 
 
+    def validate(self, item):
+        return True
+
+
     def match(self, compare_items, fields=None, completions=None, trace=None,
               context=None):
-        tracer = CallTracer(trace, "AnyToken(%s)" % (self.name,))
+        tracer = CallTracer(trace, self, compare_items)
         if not compare_items:
             tracer.fail([])
-            raise MatchError([])
+            raise MatchError("insufficient args for %r" % (str(self),))
+        if not self.validate(compare_items[0]):
+            raise MatchError("%r is not a valid %s"
+                             % (compare_items[0], str(self)))
         if fields is not None:
-            fields.setdefault(self.name, []).append(compare_items[0])
+            fields.setdefault(str(self), []).append(compare_items[0])
         return compare_items[1:]
 
 
@@ -399,14 +410,22 @@ class AnyTokenString(ParseItem):
         return "<" + self.name + "...>"
 
 
+    def validate(self, items):
+        return True
+
+
     def match(self, compare_items, fields=None, completions=None, trace=None,
               context=None):
-        tracer = CallTracer(trace, "AnyTokenString(%s)" % (self.name,))
+        tracer = CallTracer(trace, self, compare_items)
         if not compare_items:
+            raise MatchError("insufficient args for %r" % (str(self),))
+        if not self.validate(compare_items):
+            args = " ".join(compare_items)
+            args = args[:20] + "[...]" if len(args) > 25 else args
             tracer.fail([])
-            raise MatchError([])
+            raise MatchError("%r is not a valid %s" % (args, str(self)))
         if fields is not None:
-            fields.setdefault(self.name, []).extend(compare_items)
+            fields.setdefault(str(self), []).extend(compare_items)
         return []
 
 
@@ -557,10 +576,7 @@ class CmdMethodDecorator(object):
             if check is None:
                 return method(cmd_self, split_args, fields)
             else:
-                if check:
-                    print "Invalid command (unrecognised from %r)" % (check,)
-                else:
-                    print "Incomplete command"
+                print "Error: %s" % (check,)
                 print "Expected syntax: %s" % (self.parse_tree,)
 
         # Ensure wrapper has correct docstring, and also store away the parse
