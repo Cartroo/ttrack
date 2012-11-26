@@ -154,11 +154,11 @@ class TestMatching(unittest.TestCase):
         self.assertEqual(tree.check_match(("two",)), None)
         self.assertEqual(tree.check_match(("three",)), None)
         self.assertRegexpMatches(tree.check_match(("one", "two")),
-                         "unused parameters")
+                         "command invalid somewhere in")
         self.assertRegexpMatches(tree.check_match(("one", "one")),
-                         "unused parameters")
+                         "command invalid somewhere in")
         self.assertRegexpMatches(tree.check_match(("one", "two", "three")),
-                         "unused parameters")
+                         "command invalid somewhere in")
         self.assertRegexpMatches(tree.check_match([]), "insufficient args")
 
 
@@ -178,7 +178,7 @@ class TestMatching(unittest.TestCase):
         self.assertRegexpMatches(tree.check_match(("one", "three")),
                                  "doesn't match")
         self.assertRegexpMatches(tree.check_match(("one", "two", "three", "two")),
-                                 "unused parameters")
+                                 "command invalid somewhere in")
 
 
     def test_match_repeat_sequence(self):
@@ -203,7 +203,7 @@ class TestMatching(unittest.TestCase):
         self.assertRegexpMatches(tree.check_match(("one", "two")),
                                  "insufficient args")
         self.assertRegexpMatches(tree.check_match(("one", "three", "two")),
-                                 "unused parameters")
+                                 "command invalid somewhere in")
         self.assertRegexpMatches(tree.check_match(("two", "one", "three")),
                                  "doesn't match")
         self.assertRegexpMatches(tree.check_match(("two", "three")),
@@ -243,6 +243,40 @@ class TestMatching(unittest.TestCase):
                                  "doesn't match")
         self.assertRegexpMatches(tree.check_match(("one", "x", "a")),
                                  "doesn't match")
+
+
+    def test_match_subtree(self):
+        class SubtreeIdent(cmdparser.Subtree):
+            def convert(self, args, fields, context):
+                return [args, fields]
+        def ident_factory(ident):
+            if ident == "sub":
+                return SubtreeIdent(ident, "x (y|z) <foo>")
+            return None
+        spec = "one <sub> <ident>"
+        tree = cmdparser.parse_spec(spec, ident_factory=ident_factory)
+        fields = {}
+        self.assertEqual(tree.check_match(("one", "x", "y", "z", "bar"),
+                                          fields=fields), None)
+        self.assertEqual(fields, {"one": ["one"],
+                                  "<sub>": [("x", "y", "z"),
+                                            {"x": ["x"], "y": ["y"],
+                                             "<foo>": ["z"]}],
+                                  "<ident>": ["bar"]})
+        fields = {}
+        self.assertEqual(tree.check_match(("one", "x", "z", "z", "bar"),
+                                          fields=fields), None)
+        self.assertEqual(fields, {"one": ["one"],
+                                  "<sub>": [("x", "z", "z"),
+                                            {"x": ["x"], "z": ["z"],
+                                             "<foo>": ["z"]}],
+                                  "<ident>": ["bar"]})
+        self.assertRegexpMatches(tree.check_match(("one", "x", "x", "z", "a")),
+                                 "doesn't match")
+        self.assertRegexpMatches(tree.check_match(("one", "y", "y", "z", "a")),
+                                 "doesn't match")
+        self.assertRegexpMatches(tree.check_match(("one", "x", "y", "aaa")),
+                                 "insufficient args")
 
 
     def test_match_full(self):
@@ -356,6 +390,24 @@ class TestCompletions(unittest.TestCase):
                          set())
         self.assertEqual(tree.get_completions(("one", "foo", "x", "foo")),
                          set())
+
+
+    def test_complete_subtree(self):
+        class SubtreeIdent(cmdparser.Subtree):
+            def convert(self, args, fields, context):
+                return [args, fields]
+        def ident_factory(ident):
+            if ident == "sub":
+                return SubtreeIdent(ident, "x (y|z) <foo>")
+            return None
+        spec = "one <sub> <ident>"
+        tree = cmdparser.parse_spec(spec, ident_factory=ident_factory)
+        self.assertEqual(tree.get_completions(()), set(("one",)))
+        self.assertEqual(tree.get_completions(("one",)), set(("x",)))
+        self.assertEqual(tree.get_completions(("one", "x")), set(("y", "z")))
+        self.assertEqual(tree.get_completions(("one", "x", "y")), set())
+        self.assertEqual(tree.get_completions(("one", "x", "z")), set())
+        self.assertEqual(tree.get_completions(("one", "x", "y", "z")), set())
 
 
     def test_complete_full(self):

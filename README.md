@@ -15,11 +15,11 @@ tags can be applied to tasks for flexible categorisation.
 Installation
 ------------
 
-Python 2.5 or later should be sufficient to execute the scripts. If the
-parsedatetime library (http://code.google.com/p/parsedatetime/) then this will
-be used for more friendly date and time parsing.
+Python 2.5 or later should be sufficient to execute the scripts. Just ensure
+tracklib.py, cmdparser.py and datetimeparse.py are available on the PYTHONPATH
+and run ttrack.py.
 
-Just ensure tracklib.py is available on the PYTHONPATH and run ttrack.py.
+> **NOTE:** Proper packaging is on the todo list!
 
 When first run, an SQLite database is created in your home directory in a file
 called `.timetrackdb`. It's currently not possible to change the name used
@@ -198,12 +198,18 @@ are currently four types:
 * `entries`: Shows raw task times.
 
 Following the report type, the period over which the report should be run is
-specified - this can be `day`, `week` or `month`. If no other arguments are
-specified, the report for the current day/week/month is displayed. Otherwise,
-the next argument can be a number indicating how many days/weeks/months ago
-the report should be run. Specifying 0 indicates the current period (the
-default if the value is omitted), 1 indicates the previous day/week/month,
-2 indicates the period before that, etc.
+specified - the syntax for this is fairly flexible and some examples of
+what will be accepted are:
+
+* "yesterday"
+* "2 weeks ago"
+* "last month"
+* "December 2012"
+* "between 15/10/2011 and today"
+
+> **NOTE:** When providing two dates to run the report, bear in mind that the
+> first date will be inclusive but the second date will be exclusive (so the
+> example "between 15/10/2011 and today" won't include today).
 
 Finally, if splitting by task (only), a the keyword `tag` followed by a tag
 name can be specified at the end of the command. If so, the list of tasks
@@ -213,20 +219,20 @@ In case you're thinking that all sounds a bit too complicated, here are some
 simple examples which probably cover most of what you need, followed by an
 explanation of what will be displayed.
 
-    summary task time week
+    summary task time this week
 
 Display a summary of the time spent on each task so far this week.
 
-    summary tag time day 1
+    summary tag time yesterday
 
 Display a summary of the time spent yesterday on tasks in each tag.
 
-    summary task switches month 1
+    summary task switches last month
 
 Display the number of times each task interrupted another one in the previous
 month.
 
-    summary task diary month tag projects
+    summary task diary this month tag projects
 
 Display diary entries recorded so far this month for all tasks with tag
 `projects`.
@@ -243,13 +249,21 @@ For this to work you'll have to create tasks to track all the things which
 disturb you - for example, if you are interrupted by calls from customers,
 you could create a task `customersupport` to track this.
 
+Remember that context switches are budgeted against the new task (i.e. the
+"interrupting" task), not the old one (i.e. the "interrupted" task).
+
 To count as a context switch and be included in the totals for the `switches`
 report, a task must be different to the previous task and start less than a
 minute after the first one ended. When reporting by tag rather than task,
-the definition is changed to the new task must have at least one tag which
-the old task does not. For example, if two different tasks both have only the
-`coding` tag then switching between them will count as a context switch in a
-`task` report, but not in a `tag` report.
+the switch is only counted if the new task has at least one tag which the old
+task does not.
+
+For example, if two different tasks both have only the `coding`
+tag then switching between them will count as a context switch in a `task`
+report, but not in a `tag` report. By comparison, if the old task was tagged
+with "A", "B" and "C" and the new task tagged with "C", "D" and "E" then
+the context switches count would be incremented for tags "D" and "E" only
+due to the change.
 
 
 Advanced Usage

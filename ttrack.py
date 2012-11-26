@@ -2,7 +2,6 @@
 
 import atexit
 import cmd
-import collections
 import datetime
 import logging
 import operator
@@ -14,23 +13,8 @@ import sys
 import textwrap
 import time
 
-
-# Simple date/time parser in case parsedatetime isn't available.
-class SimpleCalendar(object):
-
-    def parse(self, timestr, sourceTime=None):
-        try:
-            return (time.strptime(timestr, "%Y-%m-%d %H:%M:%S"), 3)
-        except ValueError:
-            return (time.localtime(), 0)
-
-
-try:
-    from parsedatetime import parsedatetime
-    CALENDAR = parsedatetime.Calendar()
-except ImportError:
-    CALENDAR = SimpleCalendar()
-
+import cmdparser
+import datetimeparse
 import tracklib
 
 
@@ -52,7 +36,9 @@ def get_option_parser():
     parser.add_option("-H", "--skip-history", dest="skip_history",
                       action="store_true",
                       help="don't try to read/write command history")
-    parser.set_defaults(debug=False, skip_history=False)
+    parser.add_option("-M", "--mem-db", dest="mem_db", action="store_true",
+                      help="use temporary in-memory database (for testing)")
+    parser.set_defaults(debug=False, skip_history=False, mem_db=False)
     return parser
 
 
@@ -77,25 +63,6 @@ def multiline_input(prompt):
 
 
 
-def parse_time(logger, timestr, sourceTime=None):
-    """Convert time string to a datetime and return it.
-
-    If the specification isn't complete, an appropriate error is displayed
-    and None is returned.
-    """
-
-    dt, result = CALENDAR.parse(timestr, sourceTime=sourceTime)
-    if result == 0:
-        logger.error("unable to parse time '%s'", timestr)
-        return None
-    elif result == 1:
-        logger.error("no time specified in '%s'", timestr)
-        return None
-    else:
-        return datetime.datetime(*(dt[:6]))
-
-
-
 def format_duration(secs):
     if secs < 60:
         return "%d sec%s" % (secs, "" if secs == 1 else "s")
@@ -116,14 +83,27 @@ def format_duration_since_datetime(dt):
 
 
 
+def format_date(d):
+    now = datetime.date.today()
+    if now.year == d.year:
+        if now.isocalendar()[1] == d.isocalendar()[1]:
+            return d.strftime("%a %d")
+        else:
+            return d.strftime("%a %b %d")
+    else:
+        return d.strftime("%a %b %d %Y")
+
+
+
 def format_datetime(dt):
     now = datetime.datetime.now()
     if now.date() == dt.date():
         return dt.strftime("%H:%M")
-    elif (now - dt).days < 5:
-        return dt.strftime("%a %d %H:%M")
     elif now.year == dt.year:
-        return dt.strftime("%a %b %d %H:%M")
+        if now.isocalendar()[1] == dt.isocalendar()[1]:
+            return dt.strftime("%a %d %H:%M")
+        else:
+            return dt.strftime("%a %b %d %H:%M")
     else:
         return dt.strftime("%a %b %d %H:%M %Y")
 
@@ -211,134 +191,104 @@ def display_entries(entries, long_only=False):
 
 
 
+class TaskToken(cmdparser.Token):
+
+    def get_values(self, cmd_instance):
+        return set(cmd_instance.db.tasks)
+
+
+class TagToken(cmdparser.Token):
+
+    def get_values(self, cmd_instance):
+        return set(cmd_instance.db.tags)
+
+
+
+def cmd_token_factory(token_name):
+
+    if token_name == "task":
+        return TaskToken("task")
+    elif token_name == "tag":
+        return TagToken("tag")
+    elif token_name == "period":
+        return datetimeparse.PastCalendarPeriodSubtree("period")
+    elif token_name == "time":
+        return datetimeparse.DateTimeSubtree("time")
+    else:
+        return None
+
+
+
+@cmdparser.CmdClassDecorator()
 class CommandHandler(cmd.Cmd):
 
-    def __init__(self, logger):
+    def __init__(self, logger, filename=None):
         self.logger = logger
-        self.db = tracklib.TimeTrackDB(self.logger)
+        self.db = tracklib.TimeTrackDB(self.logger, filename=filename)
         readline.set_completer_delims(" \t\n")
         cmd.Cmd.__init__(self)
         self.identchars += "-"
         self.prompt = "ttrack>>> "
 
 
-    def _complete_task(self, text, extra=()):
-        return [i for i in set(self.db.tasks) | set(extra)
-                if i.startswith(text)]
+    @cmdparser.CmdMethodDecorator(token_factory=cmd_token_factory)
+    def do_create(self, args, fields):
+        """create ( tag <name> | task <name> [<tag> [...]] )
 
+        Create new tag or task.
 
-    def _complete_tag(self, text):
-        return [i for i in self.db.tags if i.startswith(text)]
-
-
-    def _complete_list(self, text, candidates):
-        return [i for i in candidates if i.startswith(text)]
-
-
-    def _complete_all_chars(self, complete_func, text, line, begidx, endidx):
-        items = shlex.split(line[:endidx])
-        if not items or len(text) >= len(items[-1]):
-            prefix = text
-        else:
-            prefix = items[-1]
-        candidates = complete_func(prefix)
-        if prefix == text:
-            return candidates
-        else:
-            offset = len(prefix) - len(text)
-            print "<<<%r>>>" % ([i[offset:] for i in candidates],)
-            return [i[offset:] for i in candidates]
-
-
-    def complete_create(self, text, line, begidx, endidx):
-        items = shlex.split(line[:begidx])
-        if len(items) == 1:
-            return self._complete_list(text, ("tag", "task"))
-        elif len(items) > 2 and items[1] == "task":
-            return self._complete_tag(text)
-        else:
-            return []
-
-
-    def do_create(self, args):
+        When creating a task, an optional list of one or more tags may be
+        specified to apply those tags to the new task without requiring other
+        'task' commands.
         """
-create (tag <name> | task <name> [<tag> [...]]) - create new tag or task.
-
-When creating a task, an optional list of one or more tags may be specified
-to apply those tags to the new task without requiring other 'task' commands.
-"""
-
-        items = shlex.split(args)
-        if len(items) < 2:
-            self.logger.error("create cmd takes at least two arguments")
-            return
-        if items[0] not in ("task", "tag"):
-            self.logger.error("create cmd takes 'task' or 'tag' as first arg")
-            return
-        if not items[1] or items[1] == "current" or items[1] == "done":
-            self.logger.error("name invalid")
-            return
-        if items[0] != "task" and len(items) > 2:
-            self.logger.error("may specify tags only when creating tasks")
-            return
 
         try:
-            if items[0] == "task":
-                self.db.tasks.add(items[1])
-                print "Created task '%s'" % (items[1],)
-                for tag in items[2:]:
-                    self.db.add_task_tag(items[1], tag)
-                    print "Tagged task '%s' with '%s'" % (items[1], tag)
-            elif items[0] == "tag":
-                self.db.tags.add(items[1])
-                print "Created tag '%s'" % (items[1],)
+            new_name = fields["<name>"][0]
+            if args[1] == "task":
+                self.db.tasks.add(new_name)
+                print "Created task '%s'" % (new_name,)
+                for tag in fields.get("<tag>", []):
+                    self.db.add_task_tag(new_name, tag)
+                    print "Tagged task '%s' with '%s'" % (new_name, tag)
+            elif args[1] == "tag":
+                self.db.tags.add(new_name)
+                print "Created tag '%s'" % (new_name,)
         except tracklib.TimeTrackError, e:
             self.logger.error("create error: %s", e)
 
 
-    def complete_delete(self, text, line, begidx, endidx):
-        items = shlex.split(line[:begidx])
-        if len(items) == 1:
-            return ["task", "tag"]
-        elif len(items) == 2:
-            if items[1] == "task":
-                return self._complete_task(text)
-            elif items[1] == "tag":
-                return self._complete_tag(text)
-        return []
+    @cmdparser.CmdMethodDecorator(token_factory=cmd_token_factory)
+    def do_delete(self, args, fields):
+        """delete (task <task>|tag <tag>)
 
+        Delete existing tag or task.
 
-    def do_delete(self, args):
+        WARNING: Deleting a tag will remove it from all tasks. Deleting a
+                 task will also remove associated diary, todo and log entries.
+                 DELETION OF ALL ITEMS IS PERMANENT - THERE IS NO UNDO!
         """
-delete (task|tag) <name> - delete and existing tag or task.
-
-WARNING: Deleting a tag will remove it from all tasks. Deleting a
-         task will also remove associated diary, todo and log entries.
-         DELETION OF ALL ITEMS IS PERMANENT - THERE IS NO UNDO!
-"""
-
-        items = shlex.split(args)
-        if len(items) != 2:
-            self.logger.error("delete cmd takes two arguments")
-            return
-        if items[0] not in ("task", "tag"):
-            self.logger.error("delete cmd takes 'task' or 'tag' as first arg")
-            return
 
         try:
-            if items[0] == "task":
-                self.db.tasks.discard(items[1])
-            elif items[0] == "tag":
-                self.db.tags.discard(items[1])
-            print "Deleted %s '%s'" % (items[0], items[1])
+            if args[1] == "task":
+                self.db.tasks.discard(fields["<task>"][0])
+                print "Deleted task '%s'" % (fields["<task>"][0],)
+            elif "tag" in fields:
+                self.db.tags.discard(fields["<tag>"][0])
+                print "Deleted tag '%s'" % (fields["<tag>"][0],)
         except tracklib.TimeTrackError, e:
             self.logger.error("delete error: %s", e)
 
 
-    def do_diary(self, args):
+    @cmdparser.CmdMethodDecorator(token_factory=cmd_token_factory)
+    def do_diary(self, args, fields):
+        """diary [<entry...>]
+
+        Add a new diary entry to the current task.
+
+        A single-line entry can be specified on the command line, or if the
+        entry argument is ommitted then the user is prompted for a potentially
+        multi-line diary entry.
         """
-diary <entry> - add a new diary entry to the current task.
-"""
 
         # Check for current task before user enters a possibly long diary
         # entry (there is a race condition here if another process stops
@@ -353,52 +303,41 @@ diary <entry> - add a new diary entry to the current task.
         except tracklib.TimeTrackError, e:
             self.logger.error("diary error: %s", e)
 
-        args = args.strip()
-        if not args:
+        entry = " ".join(i for i in fields.get("<entry...>", []) if i)
+        if not entry:
             print "Enter diary entry, finish with a '.' on a line by itself."
-            args = multiline_input("diary> ")
-        if not args:
+            entry = multiline_input("diary> ")
+        if not entry:
             self.logger.error("empty entry specified in diary command")
             return
 
         try:
-            self.db.add_diary_entry(args)
+            self.db.add_diary_entry(entry)
             print "Entry added to task '%s'" % (task,)
         except tracklib.TimeTrackError, e:
             self.logger.error("diary error: %s", e)
 
 
-    def complete_todo(self, text, line, begidx, endidx):
-        items = shlex.split(line[:begidx])
-        if len(items) == 1:
-            return self._complete_task(text, ("current", "done"))
-        else:
-            return []
+    @cmdparser.CmdMethodDecorator(token_factory=cmd_token_factory)
+    def do_todo(self, args, fields):
+        """todo ( done | <task> ) <entry...>
 
-
-    def do_todo(self, args):
+        Add a new todo to the specified task, or mark one on the current task as
+        done.
         """
-todo ( done | <task> ) <entry>
-
-Add a new todo to the specified task, or mark one on the current task as done.
-"""
-        items = shlex.split(args)
-        if not 1 < len(items):
-            self.logger.error("todo cmd takes at least two arguments")
-            return
 
         # Work out task name.
-        if items[0] == "current":
+        if args[1] == "done":
+            task = None
+        elif args[1] == "current":
             task = self.db.get_current_task()
             if task is None:
                 self.logger.error("no current task")
                 return
-        elif items[0] == "done":
-            task = None
         else:
-            task = items[0]
+            task = fields["<task>"][0]
 
-        todo_text = " ".join(items[1:])
+        todo_text = " ".join(i for i in fields["<entry...>"] if i)
         if not todo_text:
             self.logger.error("empty entry specified in todo command")
             return
@@ -406,69 +345,52 @@ Add a new todo to the specified task, or mark one on the current task as done.
         try:
             if task is None:
                 self.db.mark_todo_done(todo_text)
+                print "Todo marked as complete: %s" % (todo_text,)
             else:
                 self.db.add_task_todo(task, todo_text)
-            print "Todo added to task '%s'" % (task,)
+                print "Todo on task '%s': %s" % (task, todo_text)
         except KeyError:
             self.logger.error("no such task: %s", task)
         except tracklib.TimeTrackError, e:
             self.logger.error("diary error: %s", e)
 
 
-    def complete_rename(self, text, line, begidx, endidx):
-        items = shlex.split(line[:begidx])
-        if len(items) == 1:
-            return self._complete_list(text, ("task", "tag"))
-        elif len(items) == 2:
-            if items[1] == "task":
-                return self._complete_task(text)
-            elif items[0] == "tag":
-                return self._complete_tag(text)
-            else:
-                return []
-        else:
-            return []
+    @cmdparser.CmdMethodDecorator(token_factory=cmd_token_factory)
+    def do_rename(self, args, fields):
+        """rename ( task <task> | tag <tag> ) <new>
 
-
-    def do_rename(self, args):
+        Changes the name of an existing task or tag.
         """
-rename (task|tag) <old> <new> - changes the name of an existing task or tag.
-"""
 
-        items = shlex.split(args)
-        if len(items) != 3:
-            self.logger.error("rename cmd takes three arguments")
-            return
-        if items[0] not in ("task", "tag"):
-            self.logger.error("rename cmd takes task/tag as first argument")
-            return
         try:
-            if items[0] == "tag":
-                self.db.tags.rename(items[1], items[2])
-                print "Tag '%s' renamed to '%s'" % (items[1], items[2])
+            new = fields["<new>"][0]
+            if args[1] == "tag":
+                old = fields["<tag>"][0]
+                self.db.tags.rename(old, new)
+                print "Tag '%s' renamed to '%s'" % (old, new)
             else:
-                self.db.tasks.rename(items[1], items[2])
-                print "Task '%s' renamed to '%s'" % (items[1], items[2])
+                old = fields["<task>"][0]
+                self.db.tasks.rename(old, new)
+                print "Task '%s' renamed to '%s'" % (old, new)
         except KeyError, e:
             self.logger.error("no such tag/task (%s)", e)
         except tracklib.TimeTrackError, e:
             self.logger.error("rename error: %s", e)
 
 
-    def do_resume(self, args):
+    @cmdparser.CmdMethodDecorator(token_factory=cmd_token_factory)
+    def do_resume(self, args, fields):
+        """resume
+
+        Switch to previously-running task.
+
+        If there is no current task, this command switches to the most recently
+        active task. If there is a currently active task, this command switches
+        to the most recently active task which is different to the current.
+        This can be used to start work on a task again after a period of
+        inactivity, or to resume work on something after an interruption.
         """
-resume - switch to previously-running task.
 
-If there is no current task, this command switches to the most recently
-active task. If there is a currently active task, this command switches
-to the most recently active task which is different to the current.
-This can be used to start work on a task again after a period of
-inactivity, or to resume work on something after an interruption.
-"""
-
-        if args.strip():
-            self.logger.error("resume cmd takes no arguments")
-            return
         try:
             prev = self.db.get_previous_task()
             if prev is None:
@@ -481,113 +403,49 @@ inactivity, or to resume work on something after an interruption.
             self.logger.error("status error: %s", e)
 
 
-    def complete_show(self, text, line, begidx, endidx):
-        if line[:begidx].strip() == "show":
-            return self._complete_list(text, ("tasks", "tags", "unused",
-                                              "todos", "diary"))
-        elif line[:begidx].strip() == "show unused":
-            return self._complete_list(text, ("tasks", "tags"))
-        elif line[:begidx].strip() in ("show tasks", "show unused tasks"):
-            return self._complete_tag(text)
-        elif line[:begidx].strip() in ("show todos", "show diary"):
-            return self._complete_list(text, ("task", "tag"))
-        elif line[:begidx].strip() in ("show todos task", "show diary task"):
-            return self._complete_task(text, ("current",))
-        elif line[:begidx].strip() in ("show todos tag", "show diary tag"):
-            return self._complete_tag(text)
-        else:
-            return []
-
-
-    def do_show(self, args):
+    @cmdparser.CmdMethodDecorator(token_factory=cmd_token_factory)
+    def do_show(self, args, fields):
         """
-show ([unused] (tasks [<tag>]|tags) | (todos|diary) [task <task>|tag <tag>])
+        show ( [unused] ( tasks [<tag>] | tags )
+             | ( todos | diary ) [ task <task> | tag <tag> ] )
 
-Display a list of available tasks or tasks, or diary entries or todo items.
+        Display available tasks or tags, or show diary entries or todo items.
 
-The optional 'unused' keyword shows only tasks which haven't been active in
-the past five weeks or tags which have no tasks attached to them - this is only
-valid when listing tags or tasks. When listing tasks, an optional tag may be
-specified to filter the tasks displayed to just those with the tag attached.
+        This command has two forms, one of which lists tasks or tags, and one
+        of which shows todo items or diary entries for either all tasks or
+        for a specified task or tag.
 
-When listing todos, all outstanding todo items are shown, optionally filtered
-by task or tag. When listing diary entries, all entries are shown, also
-optionally filtered. Note that without filtering all diary entries every
-created will be listed, which may product significant amounts of output.
-"""
+        In the first form, the optional 'unused' keyword shows only tasks
+        which haven't been active in the past five weeks or tags which have
+        no tasks attached to them. When listing tasks, an optional tag can
+        be used to filter the list displayed.
 
-        items = shlex.split(args)
-        if not 1 <= len(items) <= 3:
-            self.logger.error("show cmd takes 1-3 arguments")
-            return
-        filter_tag = None
-        filter_task = None
-        unused = 0
-        if items[0] == "unused":
-            unused = 1
-            if len(items) < 2:
-                self.logger.error("show cmd takes 'tasks' or 'tags' after"
-                                  " 'unused'")
-                return
-            if items[1] not in ("tasks", "tags"):
-                self.logger.error("show cmd takes 'tasks' or 'tags' after"
-                                  " 'unused'")
-                return
-        if items[unused] == "tasks":
-            if len(items) == 2 + unused:
-                filter_tag = items[1 + unused]
-        elif items[unused] == "tags":
-            if len(items) > 1 + unused:
-                self.logger.error("show cmd only accepts filter tag arg with"
-                                  " 'tasks'")
-                return
-        elif items[unused] in ("todos", "diary"):
-            if len(items) == 2:
-                self.logger.error("show cmd with 'todos' or 'diary' accepts"
-                                  " either zero or two additional arguments")
-                return
-            if len(items) > 2:
-                if items[1] == "task":
-                    filter_task = items[2]
-                    if filter_task == "current":
-                        filter_task = self.db.get_current_task()
-                        if filter_task is None:
-                            self.logger.error("no current task")
-                            return
-                elif items[1] == "tag":
-                    filter_tag = items[2]
-                else:
-                    self.logger.error("show cmd with 'todos' or 'diary' accepts"
-                                      " 'task' or 'tag' as next arg")
-                    return
-            if filter_tag is not None and filter_tag not in self.db.tags:
-                self.logger.error("no such tag '%s'", filter_tag)
-                return
-            if filter_task is not None and filter_task not in self.db.tasks:
-                self.logger.error("no such task '%s'", filter_task)
-                return
-        else:
-            self.logger.error("unrecognised arg to show cmd %r", items[unused])
+        When listing todos, all outstanding todo items are shown, optionally
+        filtered by a specified task or tag. When listing diary entries,
+        all entries are shown, also optionally filtered by task or tag.
+        Note that without filtering all diary entries ever created will be
+        listed, which may product significant amounts of output.
+        """
 
         try:
-            spec = "Unused" if unused else "All"
+            spec = "Unused" if "unused" in fields else "All"
 
             # List tasks
-            if items[0 + unused] == "tasks":
+            if "tasks" in fields:
                 active_tasks = set()
-                if unused:
+                if "unused" in fields:
                     start = datetime.datetime.now() - datetime.timedelta(35)
                     for entry in self.db.get_task_log_entries(start=start):
                         active_tasks.add(entry.task)
-                if filter_tag is None:
-                    print "%s tasks:" % (spec,)
+                if "<tag>" in fields:
+                    print "%s tasks with tag '%s':" % (spec, fields["<tag>"][0])
                 else:
-                    print "%s tasks with tag '%s':" % (spec, filter_tag)
+                    print "%s tasks:" % (spec,)
                 for task in self.db.tasks:
                     if task in active_tasks:
                         continue
                     tags = self.db.get_task_tags(task)
-                    if filter_tag is not None and filter_tag not in tags:
+                    if "<tag>" in fields and fields["<tag>"][0] not in tags:
                         continue
                     if tags:
                         print "  %s (%s)" % (task, ", ".join(tags))
@@ -595,35 +453,37 @@ created will be listed, which may product significant amounts of output.
                         print "  %s" % (task,)
 
             # List tags
-            elif items[0 + unused] == "tags":
+            elif "tags" in fields:
                 print "%s tags:" % (spec,)
                 for tag in self.db.tags:
                     tasks = len(self.db.get_tag_tasks(tag))
-                    if unused and tasks > 0:
+                    if "unused" in fields and tasks > 0:
                         continue
                     print "  %s (%d task%s)" % (tag, tasks,
                                                 "" if tasks==1 else "s")
 
             # List todos or diary
-            elif items[0] == "todos":
-                if filter_task is not None:
-                    print "Outstanding todos for task " + filter_task
-                elif filter_tag is not None:
-                    print "Outstanding todos for tag " + filter_tag
+            elif "todos" in fields:
+                task = fields.get("<task>", [None])[0]
+                tag = fields.get("<tag>", [None])[0]
+                if task is not None:
+                    print "Outstanding todos for task " + task
+                elif tag is not None:
+                    print "Outstanding todos for tag " + tag
                 else:
                     print "All outstanding todos"
-                entries = self.db.get_pending_todos(tag=filter_tag,
-                                                    task=filter_task)
+                entries = self.db.get_pending_todos(tag=tag, task=task)
                 display_diary({None: entries})
 
             else:
-                if filter_task is not None:
-                    print "Diary entries for task " + filter_task
+                if "<task>" in fields:
+                    print "Diary entries for task " + fields["<task>"][0]
                     entry_gen = self.db.get_task_log_entries(
-                            tasks=(filter_task,))
-                elif filter_tag is not None:
-                    print "Diary entries for tag " + filter_tag
-                    entry_gen = self.db.get_task_log_entries(tags=(filter_tag,))
+                            tasks=(fields["<task>"][0],))
+                elif "<tag>" in fields:
+                    print "Diary entries for tag " + fields["<tag>"][0]
+                    entry_gen = self.db.get_task_log_entries(
+                            tags=(fields["<tag>"][0],))
                 else:
                     print "All diary entries"
                     entry_gen = self.db.get_task_log_entries()
@@ -635,37 +495,29 @@ created will be listed, which may product significant amounts of output.
             self.logger.error("show error: %s", e)
 
 
-    def complete_start(self, text, line, begidx, endidx):
-        return self._complete_task(text)
+    @cmdparser.CmdMethodDecorator(token_factory=cmd_token_factory)
+    def do_start(self, args, fields):
+        """start [<task> [<time>]]
 
+        Starts timer on an already defined task.
 
-    def do_start(self, args):
+        If <task> is not specified, the most recently-created task is started.
+
+        If <time> is specified, the task is started as if that were the current
+        time. Most sensible time formats should be accepted if the
+        "parsedatetime" module is available, otherwise it must be in
+        "YYYY-MM-DD hh:mm:ss" format.
         """
-start [<task> [<end time>]] - starts timer on an already defined task.
 
-If <task> is not specified, the most recently-created task is started.
+        task = fields.get("<task>", [self.db.get_last_created_task()])[0]
+        if task is None:
+            self.logger.error("no recently-created task to start")
+            return
 
-If <end time> is specified, the task is started as if that were the current
-time. Most sensible time formats should be accepted if the "parsedatetime"
-module is installed, otherwise it must be in "YYYY-MM-DD hh:mm:ss" format.
-"""
+        dt = fields.get("<time>", [None])[0]
+        at_str = "" if dt is None else " at %s" % (format_datetime(dt),)
+        print "Starting task '%s'%s" % (task, at_str)
 
-        items = shlex.split(args)
-        if len(items) < 1:
-            task = self.db.get_last_created_task()
-            if task is None:
-                self.logger.error("no recently-created task to start")
-                return
-        else:
-            task = items[0]
-        if len(items) > 1:
-            dt = parse_time(self.logger, " ".join(items[1:]))
-            if dt is None:
-                return
-            print "Starting task '%s' at %s" % (items[0], format_datetime(dt))
-        else:
-            dt = None
-            print "Starting task '%s'" % (task,)
         try:
             self.db.start_task(task, at_datetime=dt)
         except KeyError, e:
@@ -674,14 +526,13 @@ module is installed, otherwise it must be in "YYYY-MM-DD hh:mm:ss" format.
             self.logger.error("start error: %s", e)
 
 
-    def do_status(self, args):
-        """
-status - display current task and time spent on it.
-"""
+    @cmdparser.CmdMethodDecorator(token_factory=cmd_token_factory)
+    def do_status(self, args, fields):
+        """status
 
-        if args.strip():
-            self.logger.error("status cmd takes no arguments")
-            return
+        Display current task and time spent on it, as well as previous task.
+        """
+
         try:
             prev = self.db.get_previous_task()
             if prev is None:
@@ -702,281 +553,162 @@ status - display current task and time spent on it.
             self.logger.error("status error: %s", e)
 
 
-    def do_stop(self, args):
-        """
-stop [<end time>]- stops timer on current task.
+    @cmdparser.CmdMethodDecorator(token_factory=cmd_token_factory)
+    def do_stop(self, args, fields):
+        """stop [<time>]
 
-If <end time> is specified, the task is ended as if that were the current
-time. Most sensible time formats should be accepted if the "parsedatetime"
-module is installed, otherwise it must be in "YYYY-MM-DD hh:mm:ss" format.
-"""
+        Stops timer on current task.
+
+        If <time> is specified, the task is ended as if that were the current
+        time. Most sensible time formats should be accepted if the
+        "parsedatetime" module is available, otherwise it must be in
+        "YYYY-MM-DD hh:mm:ss" format.
+        """
+
         try:
-            if args:
-                dt = parse_time(self.logger, args)
-                if dt is None:
-                    return
-                print ("Stopping task '%s' at %s" %
-                       (self.db.get_current_task(), format_datetime(dt)))
-            else:
-                dt = None
-                print "Stopping task '%s'" % (self.db.get_current_task(),)
+            task = self.db.get_current_task()
+            dt = fields.get("<time>", [None])[0]
+            at_str = "" if dt is None else " at %s" % (format_datetime(dt),)
+            print "Stopping task '%s'%s" % (task, at_str)
             self.db.stop_task(at_datetime=dt)
         except tracklib.TimeTrackError, e:
             self.logger.error("stop error: %s", e)
 
 
-    def complete_summary(self, text, line, begidx, endidx):
-        items = shlex.split(line[:begidx])
-        if len(items) == 1:
-            return self._complete_list(text, ("tag", "task"))
-        elif len(items) == 2:
-            return self._complete_list(text, ("time", "switches", "diary",
-                                              "entries", "longentries"))
-        elif len(items) == 3:
-            return self._complete_list(text, ("day", "week", "month"))
-        elif len(items) == 4:
-            return self._complete_list(text, ("this", "now", "current", "tag"))
-        elif len(items) == 5:
-            if items[-1] == "tag":
-                return self._complete_tag(text)
-            else:
-                return self._complete_list(text, ("tag",))
-        elif len(items) == 6 and items[-1] == "tag":
-            return self._complete_tag(text)
-        else:
-            return []
-
-
-    def do_summary(self, args):
+    @cmdparser.CmdMethodDecorator(token_factory=cmd_token_factory)
+    def do_summary(self, args, fields):
         """
-summary (tag|task) (time|switches|diary|entries) (day|week|month)
-        [<period>] [tag <tag>]
+        summary ( tag (time | switches | diary) [<period>]
+                | task [tag <tag>] (time | switches | diary | [long] entries)
+                       [<period>] )
 
-Shows various summary information in tabular form. The first argument sets
-whether totals are split by task or tag. The second argument sets whether
-the values shown are total time or context switches into the tag/task.
-The third argument specifies the period over which the results should be
-accumulated and the fourth specifies how many such periods to go back.
-For example, specifying "week" with a <period> of 0 shows the summary for
-the current (partial) week, whereas a <period> of 1 shows the previous week.
-If the <period> is ommitted a value of 0 is assumed. Synonyms like "current"
-are also accepted.
+        Shows various summary information over a specified period, split by
+        either task or tag. In the case of splitting by task, an optional tag
+        can be provided which filters the results to tasks with the specified
+        tag.
 
-If the optional additional "tag" argument is specified (either in place of
-or after a <period> argument) then it must be followed by the name of a
-tag. This will filter results so that only tasks with the specified tag
-are counted towards the total. This is only valid when summarising by task.
-"""
-        items = shlex.split(args)
-        if len(items) not in (3, 4, 5, 6):
-            self.logger.error("summary cmd requires 3-6 arguments")
-            return
-        if items[0] not in ("tag", "task"):
-            self.logger.error("summary cmd takes tag/task as first arg")
-            return
-        if items[1] not in ("time", "switches", "diary", "entries",
-                            "longentries"):
-            self.logger.error("invalid second arg to summary cmd")
-            return
-        if items[2] not in ("day", "week", "month"):
-            self.logger.error("unsupported period %r for summary cmd", items[3])
-            return
-        filter_tag = None
-        if len(items) < 4:
-            period = 0
+        The information shown for either can be "time" for the total time spent,
+        "switches" for the number of context switches (defined as entry into the
+        specified tag or task from a different tag or task with less than a
+        minute's gap between them) or "diary" to show all diary entries across
+        the specified period. When splitting by task only, the "entries" option
+        can also be used, which shows raw task log entries. If the optional
+        "long" argument is specified, only entries longer than four hours are
+        shown - this can be useful for detecting cases where a task should have
+        been stopped overnight, for example.
+
+        The <period> specification can only refer to dates (not times) but is
+        quite liberal in the specifications it will allow. Note that if the
+        period between two dates is specified, the end date is non-inclusive.
+        Some examples of phrases which will be accepted: "today", "3 days ago",
+        "last month", "December 2010", "week of 25 March 2011" and
+        for arbitrary dates "between 15/2/2010 and yesterday".
+        """
+
+        if "<period>" in fields:
+            start, end = fields["<period>"][0]
         else:
-            if items[3] == "tag":
-                if len(items) < 5:
-                    self.logger.error("no tag specified to filter")
-                    return
-                else:
-                    filter_tag = items[4]
-                    period = 0
-            else:
-                if items[3] in ("this", "now", "current"):
-                    period = 0
-                else:
-                    try:
-                        period = int(items[3])
-                    except ValueError:
-                        self.logger.error("summary cmd takes int as fourth arg")
-                        return
-                if len(items) > 4:
-                    if items[4] != "tag":
-                        self.logger.error("unrecognised arg '%s'", items[4])
-                        return
-                    if len(items) < 6:
-                        self.logger.error("no tag specified to filter")
-                        return
-                    filter_tag = items[5]
-        if filter_tag is not None and items[0] != "task":
-            self.logger.error("filtering by tag only valid when summarising"
-                              " by task")
-            return
-        if items[1] in ("entries", "longentries") and items[0] != "task":
-            self.logger.error("log entries may only be displayed by task")
-            return
+            # Default to the current week.
+            start = datetime.date.today()
+            start -= datetime.timedelta(start.weekday())
+            end = start + datetime.timedelta(7)
 
-        if period == 0:
-            if items[2] == "day":
-                period_name = "today"
-            else:
-                period_name = "this %s" % (items[2],)
-        elif period == 1:
-            if items[2] == "day":
-                period_name = "yesterday"
-            else:
-                period_name = "last %s" % (items[2],)
-        else:
-            period_name = "%d %ss ago" % (period, items[2])
+        filter_tag = fields.get("<tag>", None)
 
         try:
             tags_arg = set((filter_tag,)) if filter_tag is not None else None
-            if items[1] in ("entries", "longentries"):
-                summary_obj = tracklib.SummaryGenerator()
-                tracklib.get_summary_for_period(self.db, summary_obj, items[2],
-                                                period, tags=tags_arg)
-                print "\nLog entries by %s %s:\n" % (items[0], period_name)
-                display_entries(summary_obj.entries,
-                                long_only=(items[1] == "longentries"))
+            inclusive_end = end - datetime.timedelta(1)
+            if inclusive_end == start:
+                period_name = "on %s" % (format_date(start),)
             else:
-                if items[0] == "tag":
+                period_name = "between %s and %s" % (format_date(start),
+                                                     format_date(inclusive_end))
+            if "entries" in fields:
+                summary_obj = tracklib.SummaryGenerator()
+                entries = self.db.get_task_log_entries(start=start, end=end,
+                                                       tags=tags_arg)
+                summary_obj.read_entries(entries)
+                print "\nLog entries by %s %s:\n" % (args[1], period_name)
+                display_entries(summary_obj.entries,
+                                long_only=("long" in fields))
+            else:
+                if args[1] == "tag":
                     summary_obj = tracklib.TagSummaryGenerator()
                 else:
                     # We can't supply the tags_arg to get_summary_for_period(),
                     # or the context switches will be wrong in the summary
-                    # object # (since we'll fail to consider switches from or
-                    # to tasks # outside our tag filter set).
+                    # object (since we'll fail to consider switches from or
+                    # to tasks outside our tag filter set).
                     summary_obj = tracklib.TaskSummaryGenerator(tags=tags_arg)
-                tracklib.get_summary_for_period(self.db, summary_obj, items[2],
-                                                period)
-                if items[1] == "time":
-                    print "\nTime spent per %s %s:\n" % (items[0], period_name)
+                entries = self.db.get_task_log_entries(start=start, end=end)
+                summary_obj.read_entries(entries)
+                if "time" in fields:
+                    print "\nTime spent per %s %s:\n" % (args[1], period_name)
                     display_summary(summary_obj.total_time, format_duration)
-                elif items[1] == "switches":
-                    print "\nContext switches per %s %s:\n" % (items[0],
+                elif "switches" in fields:
+                    print "\nContext switches per %s %s:\n" % (args[1],
                                                                period_name)
                     display_summary(summary_obj.switches, str)
-                elif items[1] == "diary":
-                    print "\nDiary entries by %s %s:\n" % (items[0],
+                elif "diary" in fields:
+                    print "\nDiary entries by %s %s:\n" % (args[1],
                                                            period_name)
                     display_diary(summary_obj.diary_entries)
                 else:
-                    assert False, "Invalid summary type: %r" % (items[1],)
+                    assert False, "Invalid summary type: %r" % (args[2],)
         except tracklib.TimeTrackError, e:
             self.logger.error("summary error: %s", e)
 
 
-    def complete_task(self, text, line, begidx, endidx):
-        items = shlex.split(line[:begidx])
-        if len(items) == 1:
-            return self._complete_task(text, ("current",))
-        elif len(items) == 2:
-            return self._complete_list(text, ("tag", "untag", "diary", "todos"))
-        elif len(items) == 3 and items[2] in ("tag", "untag"):
-            return self._complete_tag(text)
-        else:
-            return []
+    @cmdparser.CmdMethodDecorator(token_factory=cmd_token_factory)
+    def do_task(self, args, fields):
+        """task ( <task> | current ) ( tag | untag ) <tag>
 
-
-    def do_task(self, args):
+        Adds or removes a tag from the specified task.
         """
-task <task> (tag|untag) <tag>
 
-Changes the tags applied to <task>, which may be a task name or "current".
-
-When called with either the "tag" or "untag" argument, this commands expects
-the name of a tag as the next argument and adds or removes that tag from the
-specified task as appropriate. When called with the "diary" argument, no
-further arguments are accepted and the command displays the full diary for
-the specified task.
-"""
-
-        items = shlex.split(args)
-        if not 1 < len(items) < 4:
-            self.logger.error("task cmd takes two or three arguments")
-            return
-
-        # Work out task name.
-        if items[0] == "current":
+        # Work out tag and task names.
+        tag = fields["<tag>"][0]
+        if "current" in fields:
             task = self.db.get_current_task()
             if task is None:
                 self.logger.error("no current task")
                 return
         else:
-            task = items[0]
+            task = fields["<task>"][0]
 
-        if items[1] in ("diary", "todos"):
-
-            if len(items) != 2:
-                self.logger.error("task cmd with diary/todos takes no args")
-                return
-            if items[1] == "diary":
-                summary_obj = tracklib.TaskSummaryGenerator()
-                entry_gen = self.db.get_task_log_entries(tasks=(task,))
-                summary_obj.read_entries(entry_gen)
-                display_diary(summary_obj.diary_entries)
+        try:
+            if "tag" in fields:
+                self.db.add_task_tag(task, tag)
+                print "Added tag '%s' to '%s'" % (tag, task)
             else:
-                display_diary({task: self.db.get_pending_todos(task=task)})
-
-        else:
-
-            if items[1] not in ("tag", "untag"):
-                self.logger.error("task cmd takes tag/untag/diary as 2nd arg")
-                return
-            if len(items) != 3:
-                self.logger.error("task cmd with tag/untag needs 3rd arg")
-                return
-            try:
-                if items[1] == "tag":
-                    self.db.add_task_tag(items[0], items[2])
-                    print "Added tag '%s' to '%s'" % (items[2], items[0])
-                else:
-                    self.db.remove_task_tag(items[0], items[2])
-                    print "Removed tag '%s' from '%s'" % (items[2], items[0])
-            except KeyError, e:
-                self.logger.error("no such tag/task (%s)", e)
-            except tracklib.TimeTrackError, e:
-                self.logger.error("tag error: %s", e)
+                self.db.remove_task_tag(task, tag)
+                print "Removed tag '%s' from '%s'" % (tag, task)
+        except KeyError, e:
+            self.logger.error("no such tag/task (%s)", e)
+        except tracklib.TimeTrackError, e:
+            self.logger.error("tag error: %s", e)
 
 
-    def complete_entry(self, text, line, begidx, endidx):
-        items = shlex.split(line[:begidx])
-        if len(items) == 2:
-            return self._complete_list(text, ("start", "end"))
-        else:
-            return []
+    @cmdparser.CmdMethodDecorator(token_factory=cmd_token_factory)
+    def do_entry(self, args, fields):
+        """entry <id>  ( start | end ) <time>
 
+        Updates start/end time of specified entry.
 
-    def do_entry(self, args):
+        Most sensible formats for <time> should be accepted if the
+        "parsedatetime" module is installed, otherwise it must be in
+        "YYYY-MM-DD hh:mm:ss" format. To obtain the numeric IDs of log entries
+        use "summary task entries [...]".
         """
-entry <id> (start|end) <time> - updates start/end time of specified entry.
 
-Most sensible formats for <time> should be accepted if the "parsedatetime"
-module is installed, otherwise it must be in "YYYY-MM-DD hh:mm:ss" format.
-To obtain the numeric IDs of log entries use "summary task entries [...]".
-"""
-        items = shlex.split(args)
-        if len(items) < 3:
-            self.logger.error("entry cmd takes at least three arguments")
-            return
-        if items[1] not in ("start", "end"):
-            self.logger.error("entry cmd takes start/end as second argument")
-            return
         try:
             try:
-                entry = self.db.get_entry_from_id(int(items[0]))
-                old_time = entry.start if items[1] == "starts" else entry.end
-                # If "old_time" is None, the current time is used
-                dt = parse_time(self.logger, " ".join(items[2:]),
-                                sourceTime=old_time)
-                if dt is None:
-                    # Error message has already been printed.
-                    return
+                entry = self.db.get_entry_from_id(int(fields["<id>"][0]))
+                dt = fields["<time>"][0]
                 print ("setting entry %s for task %s %s time to %s" %
-                       (entry.entry_id, entry.task, items[1],
+                       (entry.entry_id, entry.task, args[2],
                         dt.strftime("%Y-%m-%d %H:%M:%S")))
-                if items[1] == "start":
+                if "start" in fields:
                     entry.start = dt
                 else:
                     entry.end = dt
@@ -984,7 +716,8 @@ To obtain the numeric IDs of log entries use "summary task entries [...]".
                 self.logger.error("entry ID must be an integer")
                 return
             except KeyError:
-                self.logger.error("entry %r doesn't exist" % (items[0],))
+                self.logger.error("entry %r doesn't exist" %
+                                  (fields["<id>"][0],))
                 return
         except tracklib.TimeTrackError, e:
             self.logger.error("entry error: %s", e)
@@ -1051,7 +784,8 @@ def main(argv):
             pass
 
     try:
-        interpreter = CommandHandler(logger)
+        filename = ":memory:" if options.mem_db else None
+        interpreter = CommandHandler(logger, filename)
         if args:
             cmdline = []
             for arg in args:

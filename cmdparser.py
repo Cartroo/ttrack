@@ -110,8 +110,8 @@ class ParseItem(object):
     def check_match(self, items, fields=None, trace=None, context=None):
         """Return None if the specified command-line is valid and complete.
 
-        If the command-line doesn't match, the first non-matching item is
-        returned, or the empty string if the command was incomplete.
+        If the command-line doesn't match, an appropriate error explaining the
+        lack of match is returned.
 
         Calling code should typically use this instead of calling match()
         directly. Derived classes shouldn't typically override this method.
@@ -120,7 +120,9 @@ class ParseItem(object):
             unparsed = self.match(items, fields=fields, trace=trace,
                                   context=context)
             if unparsed:
-                return "unused parameters from %r onwards" % (unparsed[0],)
+                suffix = " ".join(unparsed)
+                suffix = suffix[:29] + "..." if len(suffix) > 32 else suffix
+                return "command invalid somewhere in: %r" % (suffix,)
             else:
                 return None
         except MatchError, e:
@@ -239,6 +241,64 @@ class Repeater(ParseItem):
 
 
 
+class Subtree(ParseItem):
+    """Matches an entire parse tree, converting the result to a single value.
+
+    This item is intended for use in applications which wish to present
+    a potentially complicated potion of the parse tree as a single argument.
+    A good example of this is a time specification, which might accept
+    strings such as "yesterday at 3:34" or "25 minutes ago", but wish to
+    store the result in the fields dictionary as a single datetime instance.
+
+    By default, command completion within the subtree will be enabled - if the
+    tree should be treated more like a token then it may be useful to disable
+    completion (i.e. always return no completions), and this can be done by
+    setting the suppress_completion parameter to the constructor to True.
+    """
+
+    def __init__(self, name, spec, ident_factory=None,
+                 suppress_completion=False):
+        self.name = name
+        self.suppress_completion = suppress_completion
+        # Allow any parsing exceptions to be passed out of constructor.
+        self.parse_tree = parse_spec(spec, ident_factory=ident_factory)
+
+
+    def __str__(self):
+        return '<' + str(self.name) + '>'
+
+
+    def convert(self, args, fields, context):
+        """Convert matched items into field value(s).
+
+        This method is called when the subtree matches and is passed the
+        subset of the argument list which matched as well as the fields
+        array that was filled in. It should return a list of values which
+        will be appended to those for the field name.
+
+        The base class instance simply appends the list of matched arguments
+        to the field values list.
+        """
+        return args
+
+
+    def match(self, compare_items, fields=None, completions=None, trace=None,
+              context=None):
+
+        tracer = CallTracer(trace, self, compare_items)
+        subtree_fields = {}
+        completions = None if self.suppress_completion else completions
+        new_items = self.parse_tree.match(compare_items, fields=subtree_fields,
+                                          completions=completions, trace=trace,
+                                          context=context)
+        consumed = compare_items[:len(compare_items)-len(new_items)]
+        if fields is not None:
+            field_value = fields.setdefault(str(self), [])
+            field_value.extend(self.convert(consumed, subtree_fields, context))
+        return new_items
+
+
+
 class Alternation(ParseItem):
     """Matches any of a list of alternative Sequence items.
 
@@ -349,6 +409,21 @@ class Token(ParseItem):
         return [self.token]
 
 
+    def convert(self, arg, context):
+        """Argument conversion hook.
+
+        A matched argument is filtered through this method before being placed
+        in the "fields" dictionary passed on the match() method. This allows
+        derived classes to, for example, convert the type of the argument to
+        something that's more useful to the code using the value.
+
+        The first argument (after self) is the matched token string, the second
+        is the context passed to match(). The return value should be a list to
+        be added to the list of values for the field.
+        """
+        return [arg]
+
+
     def match(self, compare_items, fields=None, completions=None, trace=None,
               context=None):
         """See ParseItem.match()."""
@@ -359,13 +434,15 @@ class Token(ParseItem):
                 completions.update(self.get_values(context))
             tracer.fail([])
             raise MatchError("insufficient args for %r" % (str(self),))
+        arg = compare_items[0]
         for value in self.get_values(context):
-            if compare_items[0] == value:
+            if arg == value:
                 if fields is not None:
-                    fields.setdefault(str(self), []).append(value)
+                    arg_list = fields.setdefault(str(self), [])
+                    arg_list.extend(self.convert(arg, context))
                 return compare_items[1:]
         tracer.fail(compare_items)
-        raise MatchError("%r doesn't match %r" % (compare_items[0], str(self)))
+        raise MatchError("%r doesn't match %r" % (arg, str(self)))
 
 
 
@@ -380,8 +457,38 @@ class AnyToken(ParseItem):
         return "<" + self.name + ">"
 
 
-    def validate(self, item):
-        return True
+    def validate(self, arg, context):
+        """Validation hook.
+
+        Derived classes can use this to indicate whether a given parameter
+        value is accpetable. Return True if yes, False otherwise. The base
+        class version returns True unless convert() raises ValueError, in
+        which case False (note that no other exceptions are caught).
+
+        For cases where a small set of values is acceptable it may be more
+        appropriate to derive from Token and override get_values(), which has
+        the advantage of also allowing tab-completion.
+        """
+        try:
+            self.convert(arg, context)
+            return True
+        except ValueError:
+            return False
+
+
+    def convert(self, arg, context):
+        """Argument conversion hook.
+
+        A matched argument is filtered through this method before being placed
+        in the "fields" dictionary passed on the match() method. This allows
+        derived classes to, for example, convert the type of the argument to
+        something that's more useful to the code using the value.
+
+        The first argument (after self) is the matched token string. The second
+        is the context passed to match(). The return value should be a list to
+        be added to the list of values for the field.
+        """
+        return [arg]
 
 
     def match(self, compare_items, fields=None, completions=None, trace=None,
@@ -390,12 +497,32 @@ class AnyToken(ParseItem):
         if not compare_items:
             tracer.fail([])
             raise MatchError("insufficient args for %r" % (str(self),))
-        if not self.validate(compare_items[0]):
-            raise MatchError("%r is not a valid %s"
-                             % (compare_items[0], str(self)))
+        arg = compare_items[0]
+        if not self.validate(arg, context):
+            raise MatchError("%r is not a valid %s" % (arg, str(self)))
         if fields is not None:
-            fields.setdefault(str(self), []).append(compare_items[0])
+            fields.setdefault(str(self), []).extend(self.convert(arg, context))
         return compare_items[1:]
+
+
+
+class IntegerToken(AnyToken):
+    """As AnyToken, but only accepts integers and converts to int values."""
+
+    def __init__(self, name, min_value=None, max_value=None):
+        AnyToken.__init__(self, name)
+        self.min_value = min_value
+        self.max_value = max_value
+
+
+    def convert(self, arg, context):
+        value = int(arg)
+        if (self.min_value is not None and value < self.min_value or
+            self.max_value is not None and value > self.max_value):
+            raise ValueError("integer value %d outside range %d-%d" %
+                             (value, self.min_value, self.max_value))
+        return [value]
+
 
 
 
@@ -410,8 +537,35 @@ class AnyTokenString(ParseItem):
         return "<" + self.name + "...>"
 
 
-    def validate(self, items):
-        return True
+    def validate(self, items, context):
+        """Validation hook.
+
+        Derived classes can use this to indicate whether a given parameter
+        list is accpetable. Return True if yes, False otherwise. The base
+        class version returns True unless convert() raises ValueError, in
+        which case False (note that no other exceptions are caught).
+        """
+        try:
+            self.convert(items, context)
+            return True
+        except ValueError:
+            return False
+
+
+    def convert(self, items, context):
+        """Argument conversion hook.
+
+        A matched argument list is filtered through this method before being
+        placed in the "fields" dictionary passed on the match() method. This
+        allows derived classes to, for example, convert the types of arguments
+        or concatenate them.
+
+        The first argument (after self) is the list of matched arguments. The
+        second is the context argument passed to match(). The return value
+        should be a list which is added to the list of values for the field -
+        the list need not be the same length as the input.
+        """
+        return items
 
 
     def match(self, compare_items, fields=None, completions=None, trace=None,
@@ -419,13 +573,14 @@ class AnyTokenString(ParseItem):
         tracer = CallTracer(trace, self, compare_items)
         if not compare_items:
             raise MatchError("insufficient args for %r" % (str(self),))
-        if not self.validate(compare_items):
+        if not self.validate(compare_items, context):
             args = " ".join(compare_items)
             args = args[:20] + "[...]" if len(args) > 25 else args
             tracer.fail([])
             raise MatchError("%r is not a valid %s" % (args, str(self)))
         if fields is not None:
-            fields.setdefault(str(self), []).extend(compare_items)
+            arg_list = fields.setdefault(str(self), [])
+            arg_list.extend(self.convert(compare_items, context))
         return []
 
 
@@ -581,7 +736,7 @@ class CmdMethodDecorator(object):
 
         # Ensure wrapper has correct docstring, and also store away the parse
         # tree for the class wrapper to use for building completer methods.
-        wrapper.__doc__ = self.new_docstring
+        wrapper.__doc__ = "\n" + self.new_docstring + "\n"
         wrapper._cmdparser_decorator = self
 
         return wrapper
