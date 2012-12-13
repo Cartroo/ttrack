@@ -8,10 +8,8 @@ import operator
 import optparse
 import os
 import readline
-import shlex
 import sys
 import textwrap
-import time
 
 import cmdparser
 import datetimeparse
@@ -192,19 +190,74 @@ def display_entries(entries, long_only=False):
 
 
 class TaskToken(cmdparser.Token):
+    """Token which matches any valid task name."""
 
-    def get_values(self, cmd_instance):
-        return set(cmd_instance.db.tasks)
+    def get_values(self, context):
+        return set(context.db.tasks)
+
 
 
 class TagToken(cmdparser.Token):
+    """Token which matches any valid tag name."""
 
-    def get_values(self, cmd_instance):
-        return set(cmd_instance.db.tags)
+    def get_values(self, context):
+        return set(context.db.tags)
+
+
+
+class TTrackTimeTokens(cmdparser.Token):
+    """Token matching a time alias."""
+
+    def get_values(self, context):
+        return set(i.split("_", 1)[0]
+                   for i in context.db.info.keys() if i.endswith("_time"))
+
+
+    def convert(self, arg, context):
+        ret = context.db.info.get(arg + "_time", None)
+        if ret is None:
+            raise ValueError(arg)
+        return [ret]
+
+
+
+class TTrackTimeSubtree(cmdparser.Subtree):
+    """A subtree matching a DateTimeSubtree and ttrack-specific tokens.
+
+    This subtree is essentially a thin wrapper around the DateTimeSubtree
+    class from the datetimeparse module which mixes in the TTrackTimeTokens
+    class as an alternate option.
+    """
+
+    spec = """( <time> | <ttracktime> )"""
+
+    @staticmethod
+    def ident_factory(token):
+
+        if token == "time":
+            return datetimeparse.DateTimeSubtree(token)
+        elif token == "ttracktime":
+            return TTrackTimeTokens(token)
+        return None
+
+
+    def __init__(self, name):
+
+        cmdparser.Subtree.__init__(self, name, self.spec,
+                                   ident_factory=self.ident_factory)
+
+
+    def convert(self, args, fields, context):
+
+        for token in ("<time>", "<ttracktime>"):
+            if token in fields:
+                return fields[token]
+        raise ValueError("no matching tokens")
 
 
 
 def cmd_token_factory(token_name):
+    """Factory function for ttrack tokens."""
 
     if token_name == "task":
         return TaskToken("task")
@@ -213,7 +266,7 @@ def cmd_token_factory(token_name):
     elif token_name == "period":
         return datetimeparse.PastCalendarPeriodSubtree("period")
     elif token_name == "time":
-        return datetimeparse.DateTimeSubtree("time")
+        return TTrackTimeSubtree("time")
     else:
         return None
 
@@ -221,6 +274,7 @@ def cmd_token_factory(token_name):
 
 @cmdparser.CmdClassDecorator()
 class CommandHandler(cmd.Cmd):
+    """Main ttrack command handler."""
 
     def __init__(self, logger, filename=None):
         self.logger = logger
@@ -721,6 +775,35 @@ class CommandHandler(cmd.Cmd):
                 return
         except tracklib.TimeTrackError, e:
             self.logger.error("entry error: %s", e)
+
+
+    def do_info(self, args):
+        """info
+
+        Shows version and other miscellaneous information.
+        """
+
+        lines = []
+        lines.append(("Version", VERSION))
+        lines.append(("Local time", format_datetime(datetime.datetime.now())))
+        lines.append(("Tasks in DB", str(len(self.db.tasks))))
+        lines.append(("Tags in DB", str(len(self.db.tags))))
+        lines.append(("DB schema ver", str(self.db.info.get("version", None))))
+        pad_len = len(max((i[0] for i in lines), key=len))
+        for key, value in lines:
+            print "%*s: %s" % (pad_len, key, value)
+
+        print
+        print "Available time aliases:"
+        lines = []
+        for key in (i for i in self.db.info if i.endswith("_time")):
+            time_str = format_datetime(self.db.info[key])
+            prefix = "  " + key.split("_", 1)[0]
+            lines.append((prefix, time_str))
+        pad_len = len(max((i[0] for i in lines), key=len))
+        for key, value in lines:
+            print "%*s: %s" % (pad_len, key, value)
+
 
 
     def do_exit(self, args):

@@ -1,5 +1,6 @@
 
 import bisect
+import cPickle
 import collections
 from datetime import datetime, timedelta
 import os
@@ -13,40 +14,13 @@ class TimeTrackError(Exception):
 
 
 
-class TiedSet(collections.MutableSet):
-    """Dictionary interface to tags and tasks."""
+class TiedContainer(object):
+    """Mixin class to add shared methods for tied containers."""
 
-    def __init__(self, logger, conn, base_type):
+    def __init__(self, logger, conn, table):
         self.logger = logger
         self.conn = conn
-        self.table = base_type + "s"
-        self.base_type = base_type
-
-
-    def get_id(self, item):
-        cur = self.conn.cursor()
-        cur.execute("SELECT id FROM %s WHERE name LIKE ?" % (self.table,),
-                    (item,))
-        row = cur.fetchone()
-        if row is None:
-            raise KeyError(item)
-        else:
-            if cur.fetchone() is not None:
-                raise KeyError("ambiguous: %r" % (item,))
-            return row[0]
-
-
-    def rename(self, old, new):
-        try:
-            self.get_id(new)
-            raise TimeTrackError("new name '%s' already exists" % (new,))
-        except KeyError:
-            pass
-        row_id = self.get_id(old)
-        cur = self.conn.cursor()
-        with self.conn:
-            cur.execute("UPDATE %s SET name=? WHERE id=?" % (self.table,),
-                        (new, row_id))
+        self.table = table
 
 
     def __len__(self):
@@ -67,6 +41,73 @@ class TiedSet(collections.MutableSet):
             return True
         except KeyError:
             return False
+
+
+    def get_id(self, item):
+        cur = self.conn.cursor()
+        cur.execute("SELECT id FROM %s WHERE name LIKE ?" % (self.table,),
+                    (item,))
+        row = cur.fetchone()
+        if row is None:
+            raise KeyError(item)
+        elif cur.fetchone() is not None:
+            raise KeyError("ambiguous: %r" % (item,))
+        return row[0]
+
+
+    def rename(self, old, new):
+        try:
+            self.get_id(new)
+            raise TimeTrackError("new name '%s' already exists" % (new,))
+        except KeyError:
+            pass
+        row_id = self.get_id(old)
+        cur = self.conn.cursor()
+        with self.conn:
+            cur.execute("UPDATE %s SET name=? WHERE id=?" % (self.table,),
+                        (new, row_id))
+
+
+
+class TiedDict(TiedContainer, collections.MutableMapping):
+    """Dict interface to info tags."""
+
+    def __init__(self, logger, conn, table):
+        TiedContainer.__init__(self, logger, conn, table)
+
+
+    def __getitem__(self, item):
+        cur = self.conn.cursor()
+        cur.execute("SELECT value FROM %s WHERE name LIKE ?" % (self.table,),
+                    (item,))
+        row = cur.fetchone()
+        if row is None:
+            raise KeyError(item)
+        elif cur.fetchone() is not None:
+            raise KeyError("ambiguous: %r" % (item,))
+        return cPickle.loads(row[0].encode("utf8"))
+
+
+    def __setitem__(self, item, value):
+        cur = self.conn.cursor()
+        with self.conn:
+            cur.execute("INSERT OR REPLACE INTO %s (name, value) VALUES (?, ?)"
+                        % (self.table,), (item, cPickle.dumps(value)))
+
+
+    def __delitem__(self, item):
+        cur = self.conn.cursor()
+        with self.conn:
+            cur.execute("DELETE FROM %s WHERE name LIKE ?" % (self.table,), 
+                        (item,))
+
+
+class TiedSet(TiedContainer, collections.MutableSet):
+    """Set interface to tags and tasks."""
+
+    def __init__(self, logger, conn, base_type):
+        TiedContainer.__init__(self, logger, conn, base_type + "s")
+        self.base_type = base_type
 
 
     def add(self, item):
@@ -153,6 +194,13 @@ def create_tracklib_schema(logger, conn):
                         " added INTEGER NOT NULL,"
                         " done INTEGER NOT NULL,"
                         " FOREIGN KEY (task) REFERENCES tasks(id))")
+        if "info" not in tables:
+            cur.execute("CREATE TABLE info ("
+                        " id INTEGER PRIMARY KEY,"
+                        " name TEXT UNIQUE NOT NULL,"
+                        " value TEXT)")
+            cur.execute("INSERT INTO info (name, value) VALUES (?, ?)",
+                        ("version", cPickle.dumps(1)))
 
 
 
@@ -326,12 +374,17 @@ class TimeTrackDB(object):
         self.ensure_schema()
         self.tags = TiedSet(logger, self.conn, "tag")
         self.tasks = TiedSet(logger, self.conn, "task")
+        self.info = TiedDict(logger, self.conn, "info")
+
+        # Log startup time.
+        self.info["startup_time"] = datetime.now()
 
 
     def __del__(self):
         """Closes connection."""
 
         if self.conn is not None:
+            self.info["shutdown_time"] = datetime.now()
             self.conn.close()
             self.conn = None
 
@@ -431,6 +484,7 @@ class TimeTrackDB(object):
         task = self._get_current_task_with_id()
         if task is not None:
             cur = self.conn.cursor()
+            self.info["taskstop_time"] = datetime.fromtimestamp(epoch_time)
             with self.conn:
                 cur.execute("UPDATE tasklog SET end=?"
                             " WHERE id=?", (epoch_time, task[0]))
@@ -488,6 +542,7 @@ class TimeTrackDB(object):
         # If new task specified, start it.
         if new_task_id is not None:
             cur = self.conn.cursor()
+            self.info["taskstart_time"] = datetime.fromtimestamp(epoch_time)
             with self.conn:
                 cur.execute("INSERT INTO tasklog (task, start, end)"
                             " VALUES (?, ?, NULL)",
@@ -624,6 +679,7 @@ class TimeTrackDB(object):
         task_id = self.tasks.get_id(task)
         cur = self.conn.cursor()
         with self.conn:
+            self.info["diaryentry_time"] = datetime.now()
             cur.execute("INSERT INTO diary (task, description, time)"
                         " VALUES (?, ?, ?)",
                         (task_id, desc, epoch_time))
@@ -641,6 +697,7 @@ class TimeTrackDB(object):
         epoch_time = time.mktime(datetime.now().timetuple())
         cur = self.conn.cursor()
         with self.conn:
+            self.info["todoadded_time"] = datetime.now()
             cur.execute("INSERT INTO todos (task, added, done, description)"
                         " VALUES (?, ?, 0, ?)",
                         (task_id, epoch_time, desc))
@@ -675,6 +732,7 @@ class TimeTrackDB(object):
             elif matches > 1:
                 raise TimeTrackError("%d todo matches found for task %s: %s"
                                      % (matches, task, desc))
+            self.info["tododone_time"] = datetime.now()
             cur.execute("UPDATE todos SET done=? WHERE task=?"
                         " AND description LIKE ?",
                         (epoch_time, task_id, "%" + desc + "%"))

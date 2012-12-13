@@ -1,6 +1,6 @@
 #!/usr/bin/python
 
-
+import cPickle
 import datetime
 import logging
 import sqlite3
@@ -16,6 +16,101 @@ class NullHandler(logging.Handler):
 
     def emit(self, record):
         pass
+
+
+# Must be defined at the top level to be pickled.
+class MyClass(object):
+    """A test class type."""
+
+    def __init__(self, value):
+        self.local_value = value
+
+    def method(self):
+        return self.local_value
+
+
+class TestInfoTiedDict(unittest.TestCase):
+
+    def setUp(self):
+        self.logger = NullHandler()
+        self.conn = sqlite3.connect(":memory:")
+        tracklib.create_tracklib_schema(self.logger, self.conn)
+
+
+    def tearDown(self):
+        self.conn.close()
+        del self.conn
+
+
+    def _check_info(self, expected):
+        cur = self.conn.cursor()
+        cur.execute("SELECT name, value FROM info")
+        found = dict((k, cPickle.loads(v.encode("utf8"))) for k, v in cur)
+        for item, value in expected.iteritems():
+            self.assertEqual(value, found[item])
+
+
+    def test_add_info(self):
+        info = tracklib.TiedDict(self.logger, self.conn, "info")
+        self.assertFalse("foo" in info)
+        info["foo"] = "bar"
+        self.assertTrue("foo" in info)
+        self._check_info({"foo": "bar"})
+
+
+    def test_del_info(self):
+        info = tracklib.TiedDict(self.logger, self.conn, "info")
+        self.assertFalse("foo" in info)
+        info["foo"] = "bar"
+        self.assertTrue("foo" in info)
+        del info["foo"]
+        self.assertFalse("foo" in info)
+        self._check_info({})
+
+
+    def test_update_info(self):
+        info = tracklib.TiedDict(self.logger, self.conn, "info")
+        self.assertFalse("foo" in info)
+        info["foo"] = "bar"
+        self.assertTrue("foo" in info)
+        self._check_info({"foo": "bar"})
+        info["foo"] = "baz"
+        self.assertTrue("foo" in info)
+        self._check_info({"foo": "baz"})
+
+
+    def test_add_str_persist(self):
+        info = tracklib.TiedDict(self.logger, self.conn, "info")
+        self.assertFalse("foo" in info)
+        info["foo"] = "bozzle"
+        self.assertTrue("foo" in info)
+        del info
+        info = tracklib.TiedDict(self.logger, self.conn, "info")
+        self.assertTrue("foo" in info)
+        self.assertEqual(info["foo"], "bozzle")
+
+
+    def test_add_datetime_persist(self):
+        info = tracklib.TiedDict(self.logger, self.conn, "info")
+        self.assertFalse("foo" in info)
+        info["foo"] = datetime.datetime(2010, 1, 2, 3, 4, 5)
+        self.assertTrue("foo" in info)
+        del info
+        info = tracklib.TiedDict(self.logger, self.conn, "info")
+        self.assertTrue("foo" in info)
+        self.assertEqual(info["foo"], datetime.datetime(2010, 1, 2, 3, 4, 5))
+
+
+    def test_add_class_persist(self):
+        info = tracklib.TiedDict(self.logger, self.conn, "info")
+        self.assertFalse("foo" in info)
+        info["foo"] = MyClass(12345)
+        self.assertTrue("foo" in info)
+        del info
+        info = tracklib.TiedDict(self.logger, self.conn, "info")
+        self.assertTrue("foo" in info)
+        self.assertIsInstance(info["foo"], MyClass)
+        self.assertEqual(info["foo"].method(), 12345)
 
 
 

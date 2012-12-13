@@ -167,7 +167,7 @@ class DateSubtree(cmdparser.Subtree):
 class TimeSubtree(cmdparser.Subtree):
     """A subtree representing a time of day."""
 
-    spec = """<time> [am|AM|pm|PM]"""
+    spec = """( now | <time> ) [am|AM|pm|PM]"""
 
 
     @staticmethod
@@ -187,7 +187,10 @@ class TimeSubtree(cmdparser.Subtree):
 
     def convert(self, args, fields, context):
 
-        tm = fields["<time>"][0]
+        if "now" in fields:
+            tm = time.localtime()
+        else:
+            tm = fields["<time>"][0]
         ret = datetime.time(tm.tm_hour, tm.tm_min, tm.tm_sec)
 
         # The additional am/pm exists only for cases where the user inserted a
