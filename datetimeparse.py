@@ -399,7 +399,7 @@ class DateTimeSubtree(cmdparser.Subtree):
     """
 
     spec = """( [on] <date> [at] <time>
-              | [at] <time> [on] <date>
+              | [at] <time> [ [on] <date> ]
               | <relative> )"""
 
     @staticmethod
@@ -422,8 +422,12 @@ class DateTimeSubtree(cmdparser.Subtree):
 
     def convert(self, args, fields, context):
 
-        if "<date>" in fields and "<time>" in fields:
-            d,t = fields["<date>"][0], fields["<time>"][0]
+        if "<time>" in fields:
+            t = fields["<time>"][0]
+            if "<date>" in fields:
+                d = fields["<date>"][0]
+            else:
+                d = datetime.date.today()
             return [datetime.datetime(d.year, d.month, d.day,
                                       t.hour, t.minute, t.second)]
         elif "<relative>" in fields:
