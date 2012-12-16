@@ -1,4 +1,155 @@
-"""cmdparser - A simple command parsing library."""
+"""A simple command parsing library.
+
+This module allows textual command specifications to be "compiled" into parse
+tree structures which can then be used to parse command strings entered by a
+user. It also provides some decorators to use with the Python builtin cmd module
+to use these command parsers to ease some of the effort checking command syntax
+and extracting the relevant values.
+
+The structures which make up the parse tree are all classes derived from a base
+ParseItem class. This base class provides two methods which are typically
+called on the root of a parse tree:
+
+check_match()
+  This method is used to check a complete command string as entered by a user
+  against the parse tree to check for a match. Calling code is responsible for
+  splitting the command string into a list of strings first, so application can
+  select their own quoting conventions. This list is then passed to
+  check_match() which returns None, to indicate the command matches, or a string
+  containing an error message if the match fails. This method also takes a set
+  of other arguments for extracting items from the command string, see the
+  documentation for the method for more details.
+
+get_completions()
+  This method is passed a list of command-line items as check_match(), but in
+  this case the list is typically incomplete - the function returns a list of
+  strings indicating the valid tokens which could follow the command specified,
+  if any. This is used to implement tab-completion.
+
+Parse trees can be built by manually constructing class instances, but the
+intended method is to use the parse_spec() method to convert a string command
+specification into the corresponding parse tree. Command specifications consist
+of a sequence of specifiers, each of which can be a fixed string, an identifier
+in angle brackets, an alternation in round brackes or an optional alternation in
+square brackets. An example specification is shown below:
+
+    one ( two | three [ four | five ] ) <six> [...] <seven...>
+
+This specification demonstrates most of the accepted syntax for command
+specifications. It specifies that commands must consist of the fixed item
+"one" followed by either "two" or "three", where "three" may also optionally
+be followed by either "four" or "five". After this, the identifer <six> occurs -
+identifiers are explained below. After this the "[...]" indicates that the
+previous item may occur one or more times, so matching continues against <six>
+until a command-line item fails to match. After this point the ellipsis at the
+end of the <seven...> identifier indicates that this token will consume all
+remaining command-line items.
+
+This is all relatively straightforward except for the identifiers - these may
+represent arbitrarily complex sequences of items, from the basic Token class
+which matches a single fixed command-line item, to Subtree instances, which
+match against an entire nested parse tree.
+
+To specify the class of each identifier, a function is passed via the
+ident_factory keyword argument of the parse_spec() method. This function should
+take a single argument which is the name of the identifier (with the angle
+backets removed), and should return either an instance of a class derived from
+ParseItem, or None - if the function returns None then parse_spec() will assume
+the identifier is of the AnyToken class, which matches any single command-line
+item.
+
+Taking the example above, if the ident_factory function returned an instance of
+the IntegerToken class when passed the string "six" as its argument then the
+<six> identifier in the command would only match strings which were valid
+integers. Note that in this particular example, if the ident_factory returned
+None (or if no factory were specified) then the <seven...> identifier would
+never match anything because the remaining command-line would always be consumed
+by repetitions of <six>. This illustrates that the matching is purely greedy on
+a left-to-right basis, so it's quite possible (though not useful) to invent a
+command specification which is impossible to match (in this case because the
+AnyTokenString class always requires at least one argument).
+
+The instances returned by ident_factory can be of classes defined within this
+module or application-specified versions, typically derived from classes defined
+herein. It's generally intended that the following classes act as base classes
+for application-specified classes:
+
+Token
+  Override the get_values() method to specify a fixed list of strings which
+  could match - this list isn't cached so may be entirely dynamic, but note that
+  unlike the AnyToken class the list of acceptable items is known in advance.
+  Deriving from this class allows tab-completion of the values as well.
+
+AnyToken
+  Similar to Token, but in this case any string will be accepted so
+  tab-completion isn't possible. Derived instances typically override one or
+  both of the convert() and validate() methods to provide their specific
+  behaviour.
+
+AnyTokenString
+  Matches all remaining command-line items, and is otherwise similar to the
+  AnyToken class.
+
+For both AnyToken and AnyTokenString, there is a validate() method which is
+called just after matching to indicate whether the matched value is acceptable.
+Where the list of acceptable items is known in advance it's typically better to
+use Token as the base class to enable tab-completion, but in some cases it's
+only feasible to check whether a specific value matches (e.g. any string within
+a specified range of lengths is to be accepted). If this method returns False,
+matching will continue with any other possibilities as usual. Also see the
+implementation of the IntegerToken class for a simple illustration of how this
+method may be used.
+
+Many of the classes also support a convert() method, which is used to convert
+the command-line items into a more useful form for the application - for
+example, as well as only matching strings which are a sequence of digits, the
+IntegerToken class also converts the string into an int value.
+
+These converted values go into the "fields" dictionary, which is an optional
+parameter to the check_match() method. If non-None, this argument must be a
+dict-like instance which is used to store matched values indexed by identifier
+name. The key is the form of the specification item as used in parse_spec()
+and the value is a list of the matched items from the command instance being
+matched. This is perhaps best illustrated with an example using the following
+command specification:
+
+    set <name> ( age <number> | nicknames <nick> [...] )
+
+For this example, assume that the ident_factory function returns an IntegerToken
+instance for the <number> identifier and returns None in all other cases,
+leaving <name> and <nick> as the default AnyToken class.
+
+If the following call were made on the compiled parse tree:
+
+    cmd_fields = {}
+    parse_tree.check_match(("set", "Andrew", "age", "98"), fields=cmd_fields)
+
+... then the cmd_fields dict would appear as follows after the call:
+
+    { "set": ["set"], "<name>": ["Andrew"], "age": ["age"], "<number>": [98] }
+
+By comparison, the same call but using the following command items:
+
+    ("set", "Andrew", "nicknames", "Andy", "Ace", "Trouble")
+
+... would result in a dictionary populated as follows:
+
+    { "set": ["set"], "<name>": ["Andrew"], "nicknames": ["nicknames"],
+      "<nick>": ["Andy", "Ace", "Trouble"] }
+
+Finally, the CmdMethodDecorator and CmdClassDecorator classes deserve a brief
+mention. As their name suggests they're intended for use as a method and class
+decorator respectively, specifically for use with the builtin Python cmd module.
+Decorating the do_XXX() methods and the entire cmd.Cmd class instance itself
+with them will use the cmdparser facilities to parse entered commands, only
+passing valid commands on to the method itself and supporting the dict-based
+forms of command-line item extraction outlined above. The command specification
+itself is automatically extracted from the command's docstring, which is also
+used by cmd.Cmd as the online help - this is intended to keep the documentation
+and functional code in close harmony.
+
+See the docstrings of these decorators for more information.
+"""
 
 
 import itertools
@@ -677,7 +828,10 @@ class CmdClassDecorator(object):
 
     Any method which has been decorated with cmd_do_method_decorator() will
     have a tag added which is detected by this class decorator, and the
-    appropriate completion methods added.
+    appropriate completion methods added. In short, any cmd.Cmd instance
+    which has used the CmdMethodDecorator at least once should also have its
+    class definition decorated with this decorator (unless you don't want to
+    use cmdparser's automatic tab-completion support).
     """
 
     def __call__(self, cls):
@@ -697,8 +851,15 @@ class CmdClassDecorator(object):
 class CmdMethodDecorator(object):
     """Decorates a do_XXX method with command parsing code.
 
-    Also marks the method as requiring completion, suitable for the later
-    class decorator to insert a completion method.
+    This decorator changes the prototype of the method from that expected by
+    cmd.Cmd (i.e. a single string parameter containing the argument string
+    after the initial command item) to one that takes two parameters - the
+    first is the raw list of items as passed to check_match(), the second
+    is the "fields" dictionary populated by check_match().
+
+    This decorator also marks the method as requiring completion, suitable for
+    the later class decorator to insert a completion method - unless the class
+    decorator is also used, however, tab-completion won't be enabled.
     """
 
     def __init__(self, token_factory=None):

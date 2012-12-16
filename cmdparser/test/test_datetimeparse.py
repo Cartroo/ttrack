@@ -5,7 +5,7 @@ import datetime
 import time
 import unittest
 
-import datetimeparse
+from cmdparser import datetimeparse
 
 
 # Note: This file currently contains fairly minimal testing compared to what's

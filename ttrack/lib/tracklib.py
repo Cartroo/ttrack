@@ -8,6 +8,9 @@ import sqlite3
 import time
 
 
+__version__ = "1.0.0"
+
+
 
 class TimeTrackError(Exception):
     pass

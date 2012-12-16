@@ -1,6 +1,6 @@
 #!/usr/bin/python
 
-import cmdparser
+from cmdparser import cmdparser
 import unittest
 
 

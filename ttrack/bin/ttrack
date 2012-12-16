@@ -11,13 +11,12 @@ import readline
 import sys
 import textwrap
 
-import cmdparser
-import datetimeparse
+from cmdparser import cmdparser
+from cmdparser import datetimeparse
 import tracklib
 
 
-
-VERSION = "1.0"
+VERSION = tracklib.__version__
 APP_NAME = "TimeTrack"
 BANNER = "\n%s %s\n\nType 'help' to list commands.\n" % (APP_NAME, VERSION)
 HISTORY_FILE = os.path.expanduser("~/.timetrackhistory")
