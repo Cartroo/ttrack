@@ -19,6 +19,19 @@ setup(name="ttrack",
       license="LICENSE.txt",
       description="Command-line time tracking utility",
       long_description=open("README.rst").read(),
-      install_requires=["cmdparser"]
+      install_requires=["cmdparser"],
+      classifiers=[
+          "Development Status :: 5 - Production/Stable",
+          "Environment :: Console",
+          "Intended Audience :: End Users/Desktop",
+          "License :: OSI Approved :: MIT License",
+          "Natural Language :: English",
+          "Operating System :: OS Independent"
+          "Programming Language :: Python",
+          "Programming Language :: Python :: 2",
+          "Topic :: Office/Business",
+          "Topic :: Office/Business :: News/Diary",
+          "Topic :: Utilities"
+      ]
 )
 
