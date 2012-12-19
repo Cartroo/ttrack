@@ -1,0 +1,205 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+<meta name="generator" content="Docutils 0.10: http://docutils.sourceforge.net/" />
+<title>cmdparser</title>
+<link rel="stylesheet" href="rst.css" type="text/css" />
+</head>
+<body>
+<div class="document" id="cmdparser">
+<h1 class="title">cmdparser</h1>
+
+<div class="section" id="overview">
+<h1>Overview</h1>
+<p>The <tt class="docutils literal">cmdparser</tt> package contains two modules which are useful for writing
+text command parsers, particularly using the builtin Python <tt class="docutils literal">cmd</tt> module.</p>
+<p>The package consists of two modules:</p>
+<ul class="simple">
+<li><tt class="docutils literal">cmdparser</tt></li>
+<li><tt class="docutils literal">datetimeparse</tt></li>
+</ul>
+<p>These two modules are discussed below briefly. For more information see the
+docstrings of the two modules, and also the <tt class="docutils literal">ttrack</tt> command-line application
+(from which these libraries originated) makes a good example of their use.</p>
+</div>
+<div class="section" id="installation">
+<h1>Installation</h1>
+<p>Install the <tt class="docutils literal">cmdparser</tt> package from PyPI. For example, to install using
+<tt class="docutils literal">pip</tt>:</p>
+<pre class="literal-block">
+pip install ttrack
+</pre>
+</div>
+<div class="section" id="id1">
+<h1>cmdparser</h1>
+<p>This module allows the creation of parse trees from textual command
+specifications of the following form:</p>
+<pre class="literal-block">
+ham ( eggs | chips [spam] | beans [spam [...]] )
+</pre>
+<p>These parse trees can then be used to check for matches against particular
+command strings, and also allow valid completions of partial command strings to
+be listed. To build a parse tree and use it in a few examples, see the
+following example code:</p>
+<pre class="literal-block">
+#!/usr/bin/python
+
+from cmdparser import cmdparser
+
+parse_tree = cmdparser.parse_spec(&quot;one (two|three) &lt;four&gt; [five]&quot;)
+
+# Returns None to indicate successful parse
+parse_tree.check_match((&quot;one&quot;, &quot;two&quot;, &quot;anything&quot;))
+# Returns an appropriate parsing error message
+parse_tree.check_match((&quot;one&quot;, &quot;three&quot;, &quot;anything&quot;, &quot;six&quot;))
+# Returns the list [&quot;two&quot;, &quot;three&quot;]
+parse_tree.get_completions((&quot;one&quot;,))
+</pre>
+<p>As well as dealing with fixed token strings, dynamic tokens can also be set up
+where the list of strings accepted can change over time, or where arbitrary
+strings or lists of strings can be accepted. See the module's docstrings for
+specifics of the classes available, but as an example:</p>
+<pre class="literal-block">
+#!/usr/bin/python
+
+from cmdparser import cmdparser
+
+class ColourToken(cmdparser.Token):
+    def get_values(self, context):
+        # Static list here, but could easily be dynamic
+        return [&quot;red&quot;, &quot;orange&quot;, &quot;yellow&quot;, &quot;green&quot;, &quot;blue&quot;, &quot;purple&quot;]
+
+def my_ident_factory(token):
+    if token == &quot;number&quot;:
+        return cmdparser.IntegerToken(token)
+    elif token == &quot;colour&quot;:
+        return ColourToken(token)
+    return None
+
+parse_tree = cmdparser.parse_tree(&quot;take &lt;number&gt; &lt;colour&gt; balls&quot;,
+                                  ident_factory=my_ident_factory)
+
+# Returns None to indicate successful parse, and the &quot;cmd_fields&quot; dict will
+# be initialised as:
+# { &quot;take&quot;: [&quot;take&quot;], &quot;&lt;number&gt;&quot;: [&quot;23&quot;],
+#   &quot;&lt;colour&gt;&quot;: [&quot;blue&quot;], &quot;balls&quot;: [&quot;balls&quot;] }
+cmd_fields = {}
+parse_tree.check_match((&quot;take&quot;, &quot;23&quot;, &quot;blue&quot;, &quot;balls&quot;), fields=cmd_fields)
+# Returns an appropriate parsing error message
+parse_tree.check_match((&quot;take&quot;, &quot;all&quot;, &quot;red&quot;, &quot;balls&quot;))
+# Returns the list [&quot;red&quot;, &quot;orange&quot;, &quot;yellow&quot;, ..., &quot;purple&quot;]
+parse_tree.get_completions((&quot;take&quot;, &quot;5&quot;))
+</pre>
+<p>There are three classes which are suitable base classes for user-derived
+tokens:</p>
+<dl class="docutils">
+<dt><tt class="docutils literal">Token</tt></dt>
+<dd>This is useful for cases where one of a set of fixed values is suitable,
+where the list may be fixed or dynamic. The <tt class="docutils literal">get_values()</tt> method should be
+overridden to return a list of valid tokens as strings. Optionally, there is
+also a <tt class="docutils literal">convert()</tt> method which can be used to convert</dd>
+</dl>
+<p>There are also decorators for use with command handlers derived from <tt class="docutils literal">cmd.Cmd</tt>
+which allow command strings to be automatically extracted from docstring help
+text, allowing command parsing and completion to be transparently added to the
+command-handling methods of the class.</p>
+<p>To implement the <tt class="docutils literal">cmd.Cmd</tt> class, various methods of the form <tt class="docutils literal">do_XXX()</tt> are
+implemented. To add the <tt class="docutils literal">cmdparser</tt> integration, these methods must contain a
+docstring the first line(s) of which form a command specification as outlined
+above, followed by a blank line and then any descriptive text for the operation
+of the command. The prototype is also altered, taking three arguments - the
+usual <tt class="docutils literal">self</tt> argument, a list of parsed command line items and a
+<tt class="docutils literal">fields</tt> dictionary as demonstrated in the example immediately above.</p>
+<p>Once the methods have been suitably modified, the <tt class="docutils literal">CmdMethodDecorator</tt>
+decorator should be applied to each of them, and the <tt class="docutils literal">CmdClassDecorator</tt>
+decorator should be applied to the class definition as a whole:</p>
+<pre class="literal-block">
+from cmdparser import cmdparser
+
+&#64;cmdparser.CmdClassDecorator()
+class CommandHandler(cmd.Cmd):
+
+    &#64;cmdparser.CmdMethodDecorator():
+    def do_command(self, args, fields):
+        &quot;&quot;&quot;command ( add | delete ) &lt;name&gt;
+
+        This is an example command to demonstrate use of the cmd
+        decorators.
+        &quot;&quot;&quot;
+
+        # Method body goes here - it will only be called if a command
+        # parses successfully according to the specification above.
+</pre>
+<p>Note that due to the design of the <tt class="docutils literal">cmd.Cmd</tt> class, the first token in the
+specification must be the same as the method name after the <tt class="docutils literal">do_</tt> prefix. An
+exception will be raised if this is not the case.</p>
+<p>The method decorator adds some wrapper code which parses the entered command
+according to the specification, and displays an error message if parsing fails.
+Should parsing succeed, the implementation method itself is called with the
+parsed arguments and fields passed as from the <tt class="docutils literal">check_match()</tt> method of the
+parse tree. Note that when using these decorators, the <tt class="docutils literal">cmd.Cmd</tt> class
+instance is passed as the <tt class="docutils literal">context</tt> parameter to many of the token methods,
+which can be useful for recovering dynamic state.</p>
+<p>The class decorator then adds tab-completion methods for every decorated
+command method, so applications need not concern themselves with this at all.</p>
+<p>It is not necessary to decorate every command method - for very simple commands
+which take no arguments it may be simpler to leave them bare. In this case, of
+course, the method prototype must match what is expected by <tt class="docutils literal">cmd.Cmd</tt>
+(i.e. a single <tt class="docutils literal">string</tt> parameter beyond the <tt class="docutils literal">self</tt> parameter). However,
+if any method is decorated then the class decorator is required to add the
+completion methods.</p>
+<p>Finally, note that as a convenience the docstring help for commands has the
+leading whitespace of the second line stripped from all lines (on the
+assumption that the first line immediately follows a triple quote and hence has
+no indentation). Lines are also wrapped to 80 columns in the help text.</p>
+</div>
+<div class="section" id="datetimeparse">
+<h1>datetimeparse</h1>
+<p>Building on the parse trees within the <tt class="docutils literal">cmdparser</tt> module, this module adds
+specific token types to parse human-readable specifications of date and time.
+It allows both absolute and relative dates to be specified, and these are
+converted to datetime and other instances as appropriate.</p>
+<p>Some examples of the type of specifications supported:</p>
+<ul class="simple">
+<li><tt class="docutils literal">2:35pm on Wednesday last week</tt></li>
+<li><tt class="docutils literal">3 days, 2 hours and 5 minutes ago</tt></li>
+<li><tt class="docutils literal">3rd March 2012</tt></li>
+</ul>
+<p>The following classes are currently defined:</p>
+<dl class="docutils">
+<dt><tt class="docutils literal">DateSubtree</tt></dt>
+<dd>Parses a calendar date, including literal dates (<tt class="docutils literal"><span class="pre">2012-06-15</span></tt>), descriptive
+versions (<tt class="docutils literal">15th June 2012</tt>), days of the week relative to the current day
+(<tt class="docutils literal">Thursday last week</tt>) as well as <tt class="docutils literal">yesterday</tt>, <tt class="docutils literal">today</tt> and
+<tt class="docutils literal">tomorrow</tt>. The returned value is a <tt class="docutils literal">datetime.date</tt> instance.</dd>
+<dt><tt class="docutils literal">TimeSubtree</tt></dt>
+<dd>Parses a time of day in 12 or 24 hour format. The returned value is as
+returned by <tt class="docutils literal">time.localtime()</tt>.</dd>
+<dt><tt class="docutils literal">RelativeTimeSubtree</tt></dt>
+<dd>Parses phrases which indicate a time offset from the present time, such as
+<tt class="docutils literal">3 days and 2 hours ago</tt>. The returned value is an instance of
+<tt class="docutils literal">cmdparser.DateDelta</tt>, which is a wrapper class containing a
+<tt class="docutils literal">datetime.timedelta</tt> and an additional offset in calendar months. It has
+sufficient methods defined to allow it to be added or subtracted from
+a <tt class="docutils literal">datetime.datetime</tt> in the same way as <tt class="docutils literal">datetime.timedelta</tt>.</dd>
+<dt><tt class="docutils literal">DateTimeSubtree</tt></dt>
+<dd>Parses specifications of a date and time, accepting either a combination of
+<tt class="docutils literal">DateSubtree</tt> and <tt class="docutils literal">TimeSubtree</tt> phrases, or a <tt class="docutils literal">RelativeTimeSubtree</tt>
+phrase; in the latter case the time is taken as relative to the current
+time. The returned value is a <tt class="docutils literal">datetime.datetime</tt> instance.</dd>
+<dt><tt class="docutils literal">PastCalendarPeriodSubtree</tt></dt>
+<dd>Parses specifications of calendar periods in the past. Examples of the
+phrases this will accept include <tt class="docutils literal">last week</tt>, <tt class="docutils literal">3 months ago</tt>,
+<tt class="docutils literal">week containing 24th March 2012</tt> and <tt class="docutils literal">between <span class="pre">2012-02-03</span> and today</tt>.
+The returned value is a 2-tuple of <tt class="docutils literal">datetime.date</tt> instances representing
+the range of dates specified, where the first date is inclusive and the
+second exclusive.</dd>
+</dl>
+<p>See the docstrings of the classes for more details and the <tt class="docutils literal">spec</tt> class
+attribute for the complete specification of phrases that each class accepts.</p>
+</div>
+</div>
+</body>
+</html>

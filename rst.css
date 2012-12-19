@@ -1,0 +1,98 @@
+/*
+:Author: Andy Pearce
+:Contact: andy@andy-pearce.com
+:Copyright: This stylesheet has been placed in the public domain.
+
+Stylesheet for use with Docutils.
+*/
+
+@import url(html4css1.css);
+
+body {
+  background-color: #dddddd;
+  background-image: url(stripes.png);
+}
+
+
+h1 {
+  color: #8888cc;
+  text-shadow: #aaaaaa 0 0.1em 0.1em;
+  text-align: center;
+  font-size: 240%;
+}
+
+div.section {
+  margin: 5%;
+  padding: 0.1em 0.5em 0.5em;
+  border-left: 1px solid #dddddd;
+  border-bottom: 1px solid #dddddd;
+  border-radius: 0.5em;
+  -moz-border-radius: 0,5em;
+  color: black;
+  background-color: #ffffff;
+  background-image: -webkit-gradient(linear, 0% 0%, 0% 100%, from(#ffffff), to(#eeeeee));
+  background-image: -webkit-linear-gradient(top, #ffffff, #eeeeee);
+  background-image: -moz-linear-gradient(top, #ffffff, #eeeeee);
+  background-image: -ms-linear-gradient(top, #ffffff, #eeeeee);
+  background-image: -o-linear-gradient(top, #ffffff, #eeeeee);
+  box-shadow: #aaaaaa 0 0.2em 0.5em;
+}
+
+div.section h1 {
+  text-align: left;
+  margin: 0;
+  border-bottom: 1px solid #dddddd;
+  text-shadow: none;
+  font-size: 180%;
+}
+
+div.section p {
+  margin-left: 1em;
+}
+
+div.section tt {
+  color: #666666;
+}
+
+div.section blockquote {
+  margin: 0.5em 2em;
+  padding: 0.5em;
+  background-color: #e2e2f2;
+  border-radius: 0.5em;
+  -moz-border-radius: 0,5em;
+}
+
+div.section pre {
+  margin: 0.5em 2em;
+  padding: 0.2em;
+  background-color: #eeeeee;
+  border: 1px solid #e2e2e2;
+  color: #666666;
+}
+
+div.section li {
+  margin: 0.1em 0.1em 0.1em 1em;
+}
+
+div.section li p {
+  margin: 0;
+  padding: 0;
+}
+
+div.section dt {
+  margin: 0.1em 0.1em 0.1em 2em;
+}
+
+div.section dd {
+  margin: 0.1em 0.5em 0.1em 4em;
+}
+
+a {
+  text-decoration: none;
+  color: #8888cc;
+}
+
+a:hover {
+  text-decoration: underline;
+  color: #666699;
+}
