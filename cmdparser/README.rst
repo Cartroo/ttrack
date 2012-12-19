@@ -2,6 +2,9 @@
 cmdparser
 =========
 
+Overview
+========
+
 The ``cmdparser`` package contains two modules which are useful for writing
 text command parsers, particularly using the builtin Python ``cmd`` module.
 
@@ -13,6 +16,15 @@ The package consists of two modules:
 These two modules are discussed below briefly. For more information see the
 docstrings of the two modules, and also the ``ttrack`` command-line application
 (from which these libraries originated) makes a good example of their use.
+
+
+Installation
+============
+
+Install the ``cmdparser`` package from PyPI. For example, to install using
+``pip``::
+
+    pip install ttrack
 
 
 cmdparser
@@ -197,4 +209,20 @@ The following classes are currently defined:
 
 See the docstrings of the classes for more details and the ``spec`` class
 attribute for the complete specification of phrases that each class accepts.
+
+
+Feedback
+========
+
+If you have any questions, problems or requests, please get in touch with me
+at andy@andy-pearce.com. If you want to submit a bug, please do so via
+`GitHub's issue tracker`_ for the TTrack application, with which ``cmdparser``
+shares a repository.
+
+If you want to make changes, the source code is available at GitHub_ - feel
+free to send me pull requests if you make an improvement you feel others would
+find useful.
+
+.. _GitHub: https://github.com/Cartroo/ttrack
+.. _`GitHub's issue tracker`: https://github.com/Cartroo/ttrack/issues
 

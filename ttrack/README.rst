@@ -1,4 +1,7 @@
-========
+======
+TTrack
+======
+
 Overview
 ========
 
@@ -7,7 +10,7 @@ It allows you to create tasks and then track time spent working on them.
 Aggregate reports of the time spent on tasks can be produced, and arbitrary
 tags can be applied to tasks for flexible categorisation.
 
-    **NOTE:** TTrack was written for use on Unix-like platforms, and appears to
+    TTrack was written for use on Unix-like platforms, and appears to
     work on both Linux and OSX. It hasn't been tested on Windows at all,
     although I would hope that any compatibility issues would be minor.
 
@@ -16,7 +19,10 @@ Installation
 ============
 
 Install the ``ttrack`` package from PyPI - note that it depends on the
-``cmdparser`` package, also available on PyPI.
+``cmdparser`` package, also available on PyPI. For example, to install using
+``pip``::
+
+    pip install ttrack
 
 When first run, an SQLite database is created in your home directory in a file
 called ``.timetrackdb``. It's currently not possible to change the name used
@@ -212,7 +218,9 @@ what will be accepted are:
 * ``December 2012``
 * ``between 15/10/2011 and today``
 
-    **NOTE:** When providing two dates to run the report, bear in mind that the
+..
+
+    When providing two dates to run the report, bear in mind that the
     first date will be inclusive but the second date will be exclusive (so the
     example "between 15/10/2011 and today" won't include today).
 
@@ -277,20 +285,27 @@ Friday and forget to execute ``stop``, you can do so on Monday and make it
 retrspective by specifying a time: ``stop last Friday at 17:35``.
 
 Unfortunately, however, I haven't had chance to document these more advanced
-usages in this README, but the `help` command may give you the details you
+usages in this README, but the ``help`` command may give you the details you
 need. TTrack tries its best to prevent you creating entries which overlap, on
 the assumption that you can only be doing one task at a time, but it pays to
 be a little cautious if you value the records you have in the database so far.
-If in doubt, you can take a copy of the `~/.timetrackdb` file before playing
+If in doubt, you can take a copy of the ``~/.timetrackdb`` file before playing
 around, and re-instate the old data by simply copying it back into place
 if things seem to be broken.
 
 
-Contact
-=======
+Feedback
+========
 
-Hopefully that should give you enough to get started. If you have any
-questions, problems or requests, please get in touch with me at
-andy@andy-pearce.com.
+If you have any questions, problems or requests, please get in touch with me
+at andy@andy-pearce.com. If you want to submit a bug, please do so via
+`GitHub's issue tracker`_.
+
+If you want to make changes, the source code is available at GitHub_ - feel
+free to send me pull requests if you make an improvement you feel others would
+find useful.
+
+.. _GitHub: https://github.com/Cartroo/ttrack
+.. _`GitHub's issue tracker`: https://github.com/Cartroo/ttrack/issues
 
 
