@@ -64,6 +64,7 @@ div.section pre {
   border: 1px solid #444444;
   color: #cccccc;
   white-space: pre-wrap;
+  text-shadow: none;
 }
 
 div.section ul {
