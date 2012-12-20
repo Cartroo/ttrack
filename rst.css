@@ -9,69 +9,92 @@ Stylesheet for use with Docutils.
 @import url(html4css1.css);
 
 body {
-  background-color: #dddddd;
-  background-image: url(stripes.png);
+  background-color: #444444;
+  font-family: sans-serif;
+  padding: 1em;
+  color: #eeeeee;
+  text-shadow: 0 1px 1px black;
 }
 
-
-h1 {
-  color: #8888cc;
-  text-shadow: #aaaaaa 0 0.1em 0.1em;
+body > h1, h1.title {
   text-align: center;
   font-size: 240%;
+  color: #cccccc;
+  text-shadow: 0 3px 6px rgba(0,0,0,0.5);
 }
 
 div.section {
-  margin: 5%;
-  padding: 0.1em 0.5em 0.5em;
-  border-left: 1px solid #dddddd;
-  border-bottom: 1px solid #dddddd;
+  background-color: #555555;
   border-radius: 0.5em;
-  -moz-border-radius: 0,5em;
-  color: black;
-  background-color: #ffffff;
-  background-image: -webkit-gradient(linear, 0% 0%, 0% 100%, from(#ffffff), to(#eeeeee));
-  background-image: -webkit-linear-gradient(top, #ffffff, #eeeeee);
-  background-image: -moz-linear-gradient(top, #ffffff, #eeeeee);
-  background-image: -ms-linear-gradient(top, #ffffff, #eeeeee);
-  background-image: -o-linear-gradient(top, #ffffff, #eeeeee);
-  box-shadow: #aaaaaa 0 0.2em 0.5em;
+  -moz-border-radius: 0.5em;
+  margin: 2em 1em;
+  padding: 0 0 1em;
 }
 
 div.section h1 {
   text-align: left;
-  margin: 0;
-  border-bottom: 1px solid #dddddd;
-  text-shadow: none;
   font-size: 180%;
+  border-bottom: 1px solid #444444;
+  padding: 0.2em;
+  margin: 0;
 }
 
 div.section p {
-  margin-left: 1em;
+  margin: 0 0.5em;
+  padding: 0.5em 0.5em 0;
 }
 
 div.section tt {
-  color: #666666;
+  color: #cccccc;
+  font-family: monospace;
 }
 
 div.section blockquote {
-  margin: 0.5em 2em;
+  margin: 1em 2em 0.5em;
   padding: 0.5em;
-  background-color: #e2e2f2;
+  background-color: #666666;
   border-radius: 0.5em;
   -moz-border-radius: 0,5em;
 }
 
 div.section pre {
-  margin: 0.5em 2em;
-  padding: 0.2em;
-  background-color: #eeeeee;
-  border: 1px solid #e2e2e2;
-  color: #666666;
+  margin: 1em 2em 0.5em;
+  padding: 0.5em;
+  background-color: #666666;
+  border: 1px solid #444444;
+  color: #cccccc;
+  white-space: pre-wrap;
 }
+
+div.section ul {
+  list-style: none;
+  margin-left: 0;
+  padding-left: 2.2em;
+  text-indent: -1.2em;
+}
+
+div.section ol {
+  counter-reset: li;
+  list-style: none;
+  margin-left: 0;
+  padding-left: 2.6em;
+  text-indent: -1.6em;
+}
+  
 
 div.section li {
   margin: 0.1em 0.1em 0.1em 1em;
+}
+
+div.section ul > li:before {
+  content: "\2023 \2002";
+  color: #cccccc;
+}
+
+div.section ol > li:before {
+  content: counter(li) ". \2000";
+  counter-increment: li;
+  color: #cccccc;
 }
 
 div.section li p {
@@ -79,20 +102,29 @@ div.section li p {
   padding: 0;
 }
 
+div.section dl {
+  margin: 1em 2em 0.5em;
+  padding: 0;
+}
+
 div.section dt {
-  margin: 0.1em 0.1em 0.1em 2em;
+  background-color: #666666;
+  margin: 0.2em 0;
+  padding: 0.2em 0.5em;
+  font-weight: bold;
 }
 
 div.section dd {
-  margin: 0.1em 0.5em 0.1em 4em;
+  margin: 0.2em 0;
+  padding: 0.2em 2em;
 }
 
 a {
+  color: #bbbbbb;
   text-decoration: none;
-  color: #8888cc;
 }
 
 a:hover {
-  text-decoration: underline;
-  color: #666699;
+  text-shadow: 0 0 8px #cccccc;
 }
+
