@@ -30,6 +30,24 @@ class TestParser(unittest.TestCase):
             self.assertEqual(len(item.items), 1)
             self.assertIsInstance(item.items[0], cmdparser.Token)
             self.assertEqual(item.items[0].name, spec_item)
+            self.assertEqual(item.items[0].token, spec_item)
+
+
+    def test_parse_named_token_alternation(self):
+        spec = "( one:foo | two:foo | three:foo )"
+        tree = cmdparser.parse_spec(spec)
+        self.assertIsInstance(tree, cmdparser.Sequence)
+        self.assertEqual(len(tree.items), 1)
+        alt = tree.items[0]
+        self.assertIsInstance(alt, cmdparser.Alternation)
+        self.assertEqual(alt.optional, False)
+        self.assertEqual(len(alt.options), 3)
+        for item, spec_item in zip(alt.options, ("one", "two", "three")):
+            self.assertIsInstance(item, cmdparser.Sequence)
+            self.assertEqual(len(item.items), 1)
+            self.assertIsInstance(item.items[0], cmdparser.Token)
+            self.assertEqual(item.items[0].name, "foo")
+            self.assertEqual(item.items[0].token, spec_item)
 
 
     def test_parse_repeat_token(self):

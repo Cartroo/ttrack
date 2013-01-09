@@ -1,7 +1,3 @@
-=========
-cmdparser
-=========
-
 Overview
 ========
 
@@ -10,12 +6,14 @@ text command parsers, particularly using the builtin Python ``cmd`` module.
 
 The package consists of two modules:
 
-* ``cmdparser``
-* ``datetimeparse``
+* ``cmdparser.cmdparser``
+* ``cmdparser.datetimeparse``
 
 These two modules are discussed below briefly. For more information see the
 docstrings of the two modules, and also the ``ttrack`` command-line application
 (from which these libraries originated) makes a good example of their use.
+
+.. highlight:: none
 
 
 Installation
@@ -24,11 +22,13 @@ Installation
 Install the ``cmdparser`` package from PyPI. For example, to install using
 ``pip``::
 
-    pip install ttrack
+    pip install cmdparser
 
 
-cmdparser
-=========
+.. _cmdparser_overview:
+
+cmdparser Overview
+==================
 
 This module allows the creation of parse trees from textual command
 specifications of the following form::
@@ -38,9 +38,9 @@ specifications of the following form::
 These parse trees can then be used to check for matches against particular
 command strings, and also allow valid completions of partial command strings to
 be listed. To build a parse tree and use it in a few examples, see the
-following example code::
+following example code:
 
-    #!/usr/bin/python
+.. code-block:: python
 
     from cmdparser import cmdparser
 
@@ -56,9 +56,9 @@ following example code::
 As well as dealing with fixed token strings, dynamic tokens can also be set up
 where the list of strings accepted can change over time, or where arbitrary
 strings or lists of strings can be accepted. See the module's docstrings for
-specifics of the classes available, but as an example::
+specifics of the classes available, but as an example:
 
-    #!/usr/bin/python
+.. code-block:: python
 
     from cmdparser import cmdparser
 
@@ -89,7 +89,7 @@ specifics of the classes available, but as an example::
     parse_tree.get_completions(("take", "5"))
 
 
-There are three classes which are suitable base classes for user-derived
+There are four classes which are suitable base classes for user-derived
 tokens:
 
 ``Token``
@@ -97,6 +97,23 @@ tokens:
   where the list may be fixed or dynamic. The ``get_values()`` method should be
   overridden to return a list of valid tokens as strings. Optionally, there is
   also a ``convert()`` method which can be used to convert
+
+``AnyToken``
+  Similar to ``Token``, but any string is to be expected. Validation can be
+  performed via the ``validate()`` method, but that doesn't allow
+  tab-completion as it's only called once the entire command is parsed.
+  There is also a ``convert()`` method should it be required.
+
+``AnyTokenString``
+  As ``AnyToken`` but all remaining items on the command line are consumed.
+  There are ``validate()`` and ``convert()`` methods.
+
+``Subtree``
+  Matches an entire command subtree and stores the result against the specified
+  token in the ``fields`` dictionary. The command specification string must
+  be passed to the constructor, and typically classes will override the
+  ``convert()`` method to interpret the command in some way (although this
+  is strictly optional).
 
 There are also decorators for use with command handlers derived from ``cmd.Cmd``
 which allow command strings to be automatically extracted from docstring help
@@ -113,7 +130,9 @@ usual ``self`` argument, a list of parsed command line items and a
 
 Once the methods have been suitably modified, the ``CmdMethodDecorator``
 decorator should be applied to each of them, and the ``CmdClassDecorator``
-decorator should be applied to the class definition as a whole::
+decorator should be applied to the class definition as a whole:
+
+.. code-block:: python
 
     from cmdparser import cmdparser
 
@@ -159,8 +178,8 @@ assumption that the first line immediately follows a triple quote and hence has
 no indentation). Lines are also wrapped to 80 columns in the help text.
 
 
-datetimeparse
-=============
+datetimeparse Overview
+======================
 
 Building on the parse trees within the ``cmdparser`` module, this module adds
 specific token types to parse human-readable specifications of date and time.

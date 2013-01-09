@@ -1,3 +1,11 @@
+"""Date and time parsing based on cmdparser.
+
+This module contains various classes suitable for use in :mod:`cmdparser`
+parse trees which parse combinations of dates and times, including some
+natural language phrases which express relative times. The parsing is intended
+to be as broad as possible, but quite specific to the English language.
+"""
+
 
 import datetime
 import time
@@ -5,26 +13,33 @@ import time
 import cmdparser
 
 
-def alts(fmts, src, dst):
-    for fmt in fmts:
-        yield fmt
-        if src in fmt:
-            yield fmt.replace(src, dst)
-        elif dst in fmt:
-            yield fmt.replace(dst, src)
-
-
-
 class StrptimeToken(cmdparser.AnyToken):
+    """Matches one of a set of strftime() format strings.
+
+    Matches command arguments against the specified list of strftime()
+    format strings in turn, converting the value to that returned by
+    :func:`time.strptime()`.
+
+    Any combination of date and time specifiers can be put into the format,
+    subject to the same restrictions as :func:`time.strptime()`, and the
+    only additional feature this class implements is to allow variations
+    where ``-`` is replaced by ``/`` (or vice versa) and/or ``:`` is replaced
+    by ``.`` (or vice versa). So, if the time format ``"%Y-%m-%d"`` is provided
+    then implicitly ``"%Y/%m/%d"`` will also match.
+    """
 
     def __init__(self, name, time_formats):
 
+        def alts(fmts, src, dst):
+            for fmt in fmts:
+                yield fmt
+                if src in fmt:
+                    yield fmt.replace(src, dst)
+                elif dst in fmt:
+                    yield fmt.replace(dst, src)
+
         cmdparser.AnyToken.__init__(self, name)
-        self.time_formats = []
-        for time_format in alts(alts(time_formats, "-", "/"), ":", "."):
-            self.time_formats.append(time_format)
-            if "-" in time_format:
-                self.time_formats.append(time_format.replace("-", "/"))
+        self.time_formats = list(alts(alts(time_formats, "-", "/"), ":", "."))
 
 
     def convert(self, arg, context):
@@ -38,6 +53,7 @@ class StrptimeToken(cmdparser.AnyToken):
 
 
 class AgoToken(cmdparser.Token):
+    """Simple token which matches synonyms of "ago"."""
 
     def get_values(self, context):
         return ("ago", "earlier", "before", "previous", "previously", "prior")
@@ -45,12 +61,13 @@ class AgoToken(cmdparser.Token):
 
 
 class AfterToken(cmdparser.Subtree):
+    """Subtree matching phrases which are synonyms of "in the future"."""
 
     # These are intended as the union of words that might occur before
     # or after a period (e.g. "IN 3 weeks", "3 weeks LATER") so we may
     # end up accepting some grammatically incorrect phrases. The
     # interpretation should always be unambiguous, however.
-    spec = """( after | later | on | in | from (now|today) )"""
+    spec = """( after | later | on | in [the future] | from (now|today) )"""
 
     def __init__(self, name):
 
@@ -67,17 +84,17 @@ class DateSubtree(cmdparser.Subtree):
     """A subtree representing an unambiguous calendar day.
 
     This subtree accepts standard date specifications, but also phrases such
-    as "23rd of March" and "Thursday next week". Two slight subtleties should
-    be noted - if ommitted, the current week/year are assumed as appropriate,
-    and phrases of the form "(last|this|next) <weekday>" use what I consider
-    to be the most common interpretation in English-speaking nations. This is
-    specifically a synonym for "<weekday> (last|this|next) week".
+    as ``23rd of March`` and ``Thursday next week``. Two slight subtleties
+    should be noted - if omitted, the current week/year are assumed as
+    appropriate, and phrases of the form ``(last|this|next) <weekday>`` use
+    what I consider to be the most common interpretation in English-speaking
+    nations - specifically, a synonym for ``<weekday> (last|this|next) week``.
 
-    Note: these interpretations will likely trip some people up, as this
-          library doesn't have the context to decide if the future or past
-          dates are more likely. However, they're sufficiently useful and
-          common that I think it would be *more* annoying to fail to support
-          them at all.
+    These interpretations will likely trip some people up, as this
+    library doesn't have the context to decide if the future or past
+    dates are more likely. However, they're sufficiently useful and
+    common that I think it would be *more* annoying to fail to support
+    them at all.
     """
 
     spec = """( <date>
@@ -165,7 +182,10 @@ class DateSubtree(cmdparser.Subtree):
 
 
 class TimeSubtree(cmdparser.Subtree):
-    """A subtree representing a time of day."""
+    """A subtree representing a time of day.
+
+    Examples of phrases accepted include ``now`` and ``3:15pm``.
+    """
 
     spec = """( now | <time> ) [am|AM|pm|PM]"""
 
@@ -207,18 +227,21 @@ class TimeSubtree(cmdparser.Subtree):
 class DateDelta(object):
     """Represents a relative offset in calendar dates.
 
-    This class is a wrapper around the timedelta class which adds calendar
-    month offsets in addition to the days and seconds represented by
-    the timedelta. This allows calendar offsets to be represented.
+    This class is a wrapper around :class:`datetime.timedelta` which adds
+    calendar month offsets in addition to the days and seconds represented by
+    :class:`~datetime.timedelta`. This allows any arbitrary calendar offset
+    to be represented.
 
-    Instances of this class may be combined with DateDeltas, timedeltas and
-    datetime instances in the same way that timedeltas work.
+    Instances of this class may be combined with other :class:`DateDelta`
+    instances, :class:`~datetime.timedelta` instances and
+    :class:`~datetime.datetime` instances in the same way that
+    :class:`~datetime.timedelta` instances can.
 
     The behaviour of month offsets towards the end of the month is as follows:
     the month is adjusted without changing the day of the month, and if this
-    yields an invalid date then ValueError will be raised. If the date is
+    yields an invalid date then ``ValueError`` will be raised. If the date is
     valid then the time delta is then applied to this new date. This behaviour
-    may not be ideal in all cases, but should avoid ambiguity.
+    may not be ideal in all cases, but is at least unambiguous.
     """
 
     def __init__(self, delta=None, months=0):
@@ -298,11 +321,12 @@ class DateDelta(object):
 class OffsetSubtree(cmdparser.Subtree):
     """A subtree matching a period of a single unit.
 
-    This subtree matches simple clauses of the form "N units" where a unit may
-    be a second, minute, hour, day, week, month or year. The converted value
-    is a DateDelta representing the specified length of time.
+    This subtree matches simple clauses of the form ``N units`` where a unit
+    may be a second, minute, hour, day, week, month or year. The converted
+    value is a :class:`DateDelta` representing the specified length of time.
 
-    This subtree is typically only used indirectly via RelativeTimeSubtree.
+    This subtree is typically only used indirectly via
+    :class:`RelativeTimeSubtree`.
     """
 
     @staticmethod
@@ -356,8 +380,8 @@ class RelativeTimeSubtree(cmdparser.Subtree):
     """A subtree matching a relative time.
 
     This subtree matches times relative to a fixed point in time - for example,
-    phrases such as "2 hours ago" and "in 3 days and 5 minutes". Its converted
-    value is a DateDelta instance.
+    phrases such as ``2 hours ago`` and ``in 3 days and 5 minutes``. Its
+    converted value is a :class:`DateDelta` instance.
     """
 
     spec = """( <after> (<offset> [,|and]) [...]
@@ -397,8 +421,9 @@ class DateTimeSubtree(cmdparser.Subtree):
     """A subtree matching a specific point in time.
 
     This subtree attempts to parse specifications of a date and time, either
-    absolute or relative to the current time (as returned by datetime.now()).
-    The converted value is a datetime instance.
+    absolute or relative to the current time (as returned by
+    :meth:`datetime.datetime.now()`). The converted value is a
+    :class:`~datetime.datetime` instance.
     """
 
     spec = """( [on] <date> [at] <time>
@@ -442,13 +467,19 @@ class DateTimeSubtree(cmdparser.Subtree):
 class PastCalendarPeriodSubtree(cmdparser.Subtree):
     """A subtree matching a date range in the past.
 
+    Examples of matched phrases include ``last month``, ``january 2011`` and
+    ``week of 2012-03-22``. Aside from calendar periods, arbitrary periods
+    can be specified in the form ``between <date> and <date>`` or various
+    synonymous phrases - in this form, the start date is inclusive and the
+    end date is exclusive.
+
     This subtree doesn't attempt to match dates in the future, although neither
     does it have any special checks to avoid matching future dates (for
     example, if a calendar date is specified any valid date will match).
     Only dates are permitted - times of day will fail to match.
 
-    The converted value is a 2-tuple (start, end) of date instances, where
-    start is inclusive and end is exclusive.
+    The converted value is a 2-tuple ``(start, end)`` of :class:`datetime.date`
+    instances, where ``start`` is inclusive and ``end`` is exclusive.
     """
 
     spec = """( <date> | <year> | (last|this) (week|month|year)
