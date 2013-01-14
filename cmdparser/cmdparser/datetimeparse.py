@@ -165,11 +165,14 @@ class DateSubtree(cmdparser.Subtree):
         if "<weekday>" in fields:
             # Determine week offset from today.
             delta = None
-            for offset, name in enumerate(("last", "this", "next"), -1):
-                if args[0] == name or args[1] == name:
-                    delta = offset
-                    break
-            if "<ago>" in fields or "<after>" in fields:
+            if len(args) == 1:
+                delta = 0
+            else:
+                for offset, name in enumerate(("last", "this", "next"), -1):
+                    if args[0] == name or args[1] == name:
+                        delta = offset
+                        break
+            if delta is None and ("<ago>" in fields or "<after>" in fields):
                 delta = fields["<n>"][0] * (-1 if "<ago>" in fields else 1)
             assert(delta is not None)
             # Target date is Monday of target week plus weekday number.

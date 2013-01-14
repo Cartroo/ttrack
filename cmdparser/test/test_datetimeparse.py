@@ -164,6 +164,21 @@ class TestDateSubtree(unittest.TestCase):
             self.assertEqual(fields, {"<x>": [datetime.date(2012, 5, 20)]})
 
 
+    def test_bare_day_of_week(self):
+        """Issue: https://github.com/Cartroo/ttrack/issues/5"""
+        tree = datetimeparse.DateSubtree("x")
+        # 8th June 2012 was a Friday.
+        with fake_now(2012, 6, 8):
+            fields = {}
+            self.assertEqual(tree.check_match(("Wednesday",),
+                                              fields=fields), None)
+            self.assertEqual(fields, {"<x>": [datetime.date(2012, 6, 6)]})
+            fields = {}
+            self.assertEqual(tree.check_match(("Sun",),
+                                              fields=fields), None)
+            self.assertEqual(fields, {"<x>": [datetime.date(2012, 6, 10)]})
+
+
 
 class TestTimeSubtree(unittest.TestCase):
 
