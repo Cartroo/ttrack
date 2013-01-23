@@ -8,7 +8,7 @@ import sqlite3
 import time
 
 
-__version__ = "1.0.0"
+__version__ = "1.0.0dev"
 
 
 
@@ -365,6 +365,30 @@ class TaskLogEntry(object):
 
 
 
+class LastSeenUpdater(object):
+    """Handler to update last seen time.
+
+    This is separate from TimeTrackDB so that it can own its own DB connection,
+    making it safe to call from another thread (Python sqlite3 disallows
+    sharing of connections between threads).
+    """
+
+    def __init__(self, db):
+        """Opens database connection."""
+
+        self.logger = db.logger
+        self.conn = sqlite3.connect(db.filename)
+        self.info = TiedDict(self.logger, self.conn, "info")
+
+
+    def update(self):
+        """Updates last_seen time in info table."""
+
+        self.info["lastseen_time"] = datetime.now()
+
+
+
+
 class TimeTrackDB(object):
 
     def __init__(self, logger, filename=None):
@@ -374,12 +398,20 @@ class TimeTrackDB(object):
         if filename is None:
             filename = os.path.expanduser("~/.timetrackdb")
         self.conn = sqlite3.connect(filename)
+        self.filename = filename
         self.ensure_schema()
         self.tags = TiedSet(logger, self.conn, "tag")
         self.tasks = TiedSet(logger, self.conn, "task")
         self.info = TiedDict(logger, self.conn, "info")
 
-        # Log startup time.
+        # Check if "last seen" is more recent than "shutdown", and update the
+        # latter if so.
+        if "lastseen_time" in self.info:
+            if ("shutdown_time" not in self.info or
+                self.info["lastseen_time"] > self.info["shutdown_time"]):
+                self.info["shutdown_time"] = self.info["lastseen_time"]
+
+        # Log startup time and update "last seen".
         self.info["startup_time"] = datetime.now()
 
 

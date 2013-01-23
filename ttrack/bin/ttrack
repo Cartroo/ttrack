@@ -10,6 +10,7 @@ import os
 import readline
 import sys
 import textwrap
+import threading
 
 from cmdparser import cmdparser
 from cmdparser import datetimeparse
@@ -271,6 +272,34 @@ def cmd_token_factory(token_name):
 
 
 
+class ProdderThread(threading.Thread):
+    """Calls the prod() method of another object at intervals."""
+
+    def __init__(self, db, interval_secs):
+        threading.Thread.__init__(self)
+        self.daemon = True
+        self.__stop_cond = threading.Condition()
+        self.__stopping = False
+        self.__db = db
+        self.__interval_secs = interval_secs
+
+
+    def run(self):
+        """Loop around calling obj.prod() until stop() is called."""
+        updater = tracklib.LastSeenUpdater(self.__db)
+        self.__stop_cond.acquire()
+        while not self.__stopping:
+            updater.update()
+            self.__stop_cond.wait(self.__interval_secs)
+
+
+    def stop(self):
+        self.__stop_cond.acquire()
+        self.__stopping = True
+        self.__stop_cond.notify()
+        self.__stop_cond.release()
+
+
 @cmdparser.CmdClassDecorator()
 class CommandHandler(cmd.Cmd):
     """Main ttrack command handler."""
@@ -282,6 +311,21 @@ class CommandHandler(cmd.Cmd):
         cmd.Cmd.__init__(self)
         self.identchars += "-"
         self.prompt = "ttrack>>> "
+        if filename == ":memory:":
+            self.prod_thread = None
+        else:
+            self.prod_thread = ProdderThread(self.db, 10)
+            self.prod_thread.start()
+
+
+    def __del__(self):
+        if self.prod_thread is not None:
+            self.prod_thread.stop()
+            self.prod_thread.join(1)
+            if self.prod_thread.isAlive():
+                self.logger.error("failed to stop prodder thread")
+            else:
+                self.prod_thread = None
 
 
     @cmdparser.CmdMethodDecorator(token_factory=cmd_token_factory)
@@ -797,7 +841,7 @@ class CommandHandler(cmd.Cmd):
         lines = []
         for key in (i for i in self.db.info if i.endswith("_time")):
             time_str = format_datetime(self.db.info[key])
-            prefix = "  " + key.split("_", 1)[0]
+            prefix = "  " + "_".join(key.split("_")[:-1])
             lines.append((prefix, time_str))
         pad_len = len(max((i[0] for i in lines), key=len))
         for key, value in lines:
