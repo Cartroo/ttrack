@@ -77,7 +77,7 @@ def format_duration(secs):
 def format_duration_since_datetime(dt):
     now = datetime.datetime.now()
     delta = now - dt
-    return format_duration(delta.days * 3600 * 24 + delta.seconds)
+    return format_duration(delta.days * 86400 + delta.seconds)
 
 
 
@@ -311,6 +311,7 @@ class CommandHandler(cmd.Cmd):
         cmd.Cmd.__init__(self)
         self.identchars += "-"
         self.prompt = "ttrack>>> "
+        self.last_warn_long_task = None
         if filename == ":memory:":
             self.prod_thread = None
         else:
@@ -326,6 +327,30 @@ class CommandHandler(cmd.Cmd):
                 self.logger.error("failed to stop prodder thread")
             else:
                 self.prod_thread = None
+
+
+    def check_long_task(self):
+        """Prints a warning if the current task has been running too long."""
+
+        task = self.db.get_current_task()
+        if task is None:
+            self.last_warn_long_Task = None
+        elif task != self.last_warn_long_task:
+            self.last_warn_long_Task = None
+            rt = datetime.datetime.now() - self.db.get_current_task_start()
+            if rt > datetime.timedelta(0, 3600 * 8):
+                self.last_warn_long_task = task
+                print ("\nWARNING: Task %s has been running for %s\n"
+                       % (task, format_duration(rt.days * 86400 + rt.seconds)))
+
+
+    def preloop(self):
+        self.check_long_task()
+
+
+    def postcmd(self, stop, line):
+        self.check_long_task()
+        return stop
 
 
     @cmdparser.CmdMethodDecorator(token_factory=cmd_token_factory)
