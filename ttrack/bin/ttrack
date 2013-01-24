@@ -598,17 +598,20 @@ class CommandHandler(cmd.Cmd):
                 display_diary({None: entries})
 
             else:
+                # Calculate cutoff start time as 4 weeks ago, rounded to a day.
+                start = datetime.datetime.now() - datetime.timedelta(7 * 4)
+                start = start.replace(microsecond=0, second=0, minute=0, hour=0)
                 if "<task>" in fields:
                     print "Diary entries for task " + fields["<task>"][0]
                     entry_gen = self.db.get_task_log_entries(
-                            tasks=(fields["<task>"][0],))
+                            tasks=(fields["<task>"][0],), start=start)
                 elif "<tag>" in fields:
                     print "Diary entries for tag " + fields["<tag>"][0]
                     entry_gen = self.db.get_task_log_entries(
-                            tags=(fields["<tag>"][0],))
+                            tags=(fields["<tag>"][0],), start=start)
                 else:
                     print "All diary entries"
-                    entry_gen = self.db.get_task_log_entries()
+                    entry_gen = self.db.get_task_log_entries(start=start)
                 summary_obj = tracklib.TaskSummaryGenerator()
                 summary_obj.read_entries(entry_gen, merge_diaries=True)
                 display_diary(summary_obj.diary_entries)
