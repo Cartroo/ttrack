@@ -446,6 +446,17 @@ class TestTimeTrackDB(unittest.TestCase):
         self.assertEqual(self.db.get_current_task(), None)
 
 
+    def test_previous_task(self):
+        self.db.tasks.add("task1")
+        self.db.tasks.add("task2")
+        self.db.start_task("task1", datetime.datetime(2013, 3, 26, 10, 0))
+        self.db.stop_task(datetime.datetime(2013, 3, 26, 10, 30))
+        self.db.start_task("task2", datetime.datetime(2013, 3, 26, 11, 0))
+        self.assertEqual(self.db.get_current_task(), "task2")
+        self.assertEqual(self.db.get_previous_task(), "task1")
+        self.assertEqual(self.db.get_previous_task_and_time(), ("task1", 1800))
+
+
     def test_add_task_tags(self):
         self.db.tasks.add("task1")
         self.db.tasks.add("task2")

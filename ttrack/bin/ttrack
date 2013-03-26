@@ -75,8 +75,7 @@ def format_duration(secs):
 
 
 def format_duration_since_datetime(dt):
-    now = datetime.datetime.now()
-    delta = now - dt
+    delta = datetime.datetime.now() - dt
     return format_duration(delta.days * 86400 + delta.seconds)
 
 
@@ -659,11 +658,12 @@ class CommandHandler(cmd.Cmd):
         """
 
         try:
-            prev = self.db.get_previous_task()
+            prev = self.db.get_previous_task_and_time()
             if prev is None:
                 print "No previous task."
             else:
-                print "Previous task: %s" % (prev,)
+                dur_str = format_duration(prev[1])
+                print "Previous task: %s (for %s)" % (prev[0], dur_str)
             task = self.db.get_current_task()
             if task is None:
                 print "No current task."

@@ -444,20 +444,21 @@ class TimeTrackDB(object):
             return row
 
 
-    def _get_previous_task_with_id(self):
+    def _get_previous_task_and_time_with_id(self):
         """Return tuple of (log entry id, task name) or None."""
 
         task = self._get_current_task_with_id()
         cur = self.conn.cursor()
         if task is None:
-            cur.execute("SELECT L.id, T.name FROM tasklog AS L"
+            cur.execute("SELECT L.id, T.name, L.start, L.end FROM tasklog AS L"
                         " INNER JOIN tasks AS T ON L.task=T.id"
+                        " WHERE L.end is NOT NULL"
                         " ORDER BY L.end DESC LIMIT 1")
         else:
             cur_task_id = self.tasks.get_id(task[1])
-            cur.execute("SELECT L.id, T.name FROM tasklog AS L"
+            cur.execute("SELECT L.id, T.name, L.start, L.end FROM tasklog AS L"
                         " INNER JOIN tasks AS T ON L.task=T.id"
-                        " WHERE end IS NOT NULL AND L.task!=?"
+                        " WHERE L.end IS NOT NULL AND L.task!=?"
                         " ORDER BY L.end DESC LIMIT 1", (cur_task_id,))
         row = cur.fetchone()
         if row is None:
@@ -479,11 +480,18 @@ class TimeTrackDB(object):
     def get_previous_task(self):
         """Returns the name of the highest completed task."""
 
-        task = self._get_previous_task_with_id()
-        if task is None:
+        task_and_time = self.get_previous_task_and_time()
+        return task_and_time[0] if task_and_time is not None else None
+
+
+    def get_previous_task_and_time(self):
+        """As get_previous_task() but returns a tuple: (task, start, end)."""
+
+        task_and_time = self._get_previous_task_and_time_with_id()
+        if task_and_time is None:
             return None
         else:
-            return task[1]
+            return (task_and_time[1], task_and_time[3] - task_and_time[2])
 
 
     def get_last_created_task(self):
