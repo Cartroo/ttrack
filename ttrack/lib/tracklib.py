@@ -8,7 +8,7 @@ import sqlite3
 import time
 
 
-__version__ = "1.0.0dev"
+__version__ = "1.1.0"
 
 
 
