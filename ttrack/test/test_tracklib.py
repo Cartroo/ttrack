@@ -1052,6 +1052,70 @@ class TestTimeTrackDB(unittest.TestCase):
                           "task4", "Todo for task4"))
 
 
+    def test_delete_entries(self):
+        self._create_sample_task_logs()
+        cur = self.db.conn.cursor()
+
+        # Verify all expected entries present in DB.
+        cur.execute("SELECT COUNT(*) FROM tasklog")
+        row = cur.fetchone()
+        self.assertEqual(row[0], 8)
+        cur.execute("SELECT COUNT(*) FROM diary")
+        row = cur.fetchone()
+        self.assertEqual(row[0], 4)
+        cur.execute("SELECT COUNT(*) FROM todos")
+        row = cur.fetchone()
+        self.assertEqual(row[0], 3)
+        self.assertEqual(self.db.get_current_task(), "task7")
+
+        # Remove all entries associated with tag1.
+        for entry in self.db.get_task_log_entries(tags=('tag1',)):
+            entry.delete()
+
+        # Verify all expected entries deleted from DB.
+        cur.execute("SELECT COUNT(*) FROM tasklog")
+        row = cur.fetchone()
+        self.assertEqual(row[0], 3)
+        cur.execute("SELECT COUNT(*) FROM diary")
+        row = cur.fetchone()
+        self.assertEqual(row[0], 1)
+        cur.execute("SELECT COUNT(*) FROM todos")
+        row = cur.fetchone()
+        self.assertEqual(row[0], 2)
+        self.assertEqual(self.db.get_current_task(), None)
+
+        # Validate that non-deleted entries remain unchanged.
+        entries = list(self.db.get_task_log_entries())
+        self.assertEqual(len(entries), 3)
+
+        self.assertEqual(entries[0].task, 'task2')
+        self.assertEqual(entries[0].start,
+                         datetime.datetime(2011, 1, 1, 10, 30, 0))
+        self.assertEqual(entries[0].end,
+                         datetime.datetime(2011, 1, 1, 12, 0, 0))
+        self.assertEqual(len(entries[0].diary), 2)
+        self.assertEqual(entries[0].diary[0],
+                         (datetime.datetime(2011, 1, 1, 10, 35, 0),
+                          'task2', 'one'))
+        self.assertEqual(entries[0].diary[1],
+                         (datetime.datetime(2011, 1, 1, 10, 35, 5),
+                          'task2', '[DONE] Todo for task2'))
+
+        self.assertEqual(entries[1].task, 'task4')
+        self.assertEqual(entries[1].start,
+                         datetime.datetime(2011, 1, 3, 10, 0, 0))
+        self.assertEqual(entries[1].end,
+                         datetime.datetime(2011, 1, 3, 11, 0, 0))
+        self.assertEqual(len(entries[1].diary), 0)
+
+        self.assertEqual(entries[2].task, 'task6')
+        self.assertEqual(entries[2].start,
+                         datetime.datetime(2011, 1, 3, 12, 0, 0))
+        self.assertEqual(entries[2].end,
+                         datetime.datetime(2011, 1, 3, 13, 0, 0))
+        self.assertEqual(len(entries[2].diary), 0)
+
+
 
 if __name__ == "__main__":
     unittest.main()

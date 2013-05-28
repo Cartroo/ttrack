@@ -8,7 +8,9 @@ import sqlite3
 import time
 
 
-__version__ = "1.1.0"
+__version__ = "1.1.1.dev1"
+
+MAX_SQLITE_VARS = 999
 
 
 
@@ -220,16 +222,20 @@ class TaskLogEntry(object):
 
     def __init__(self, logger, db, task, entry_id, start, end,
                  mutable_times=True):
+        # Public attributes.
         self.diary = []
         self.tags = set()
         self.task = task
         self.entry_id = entry_id
         self.db = db
         self.mutable_times = mutable_times
-
+        # Store IDs of associated diary and complete todo entries for delete().
+        self._diary_ids = set()
+        self._todo_ids = set()
+        # Underlying start and end time, used by property getter/setters.
         self._start = datetime.fromtimestamp(start)
         self._end = datetime.fromtimestamp(end) if end is not None else None
-
+        # Connect to DB and populate diary entries and tags.
         cur = db.conn.cursor()
         self.get_diary_entries(logger, cur, task, start, end)
         self.get_tags(logger, cur, task)
@@ -318,12 +324,12 @@ class TaskLogEntry(object):
 
     def get_diary_entries(self, logger, cur, task, start, end):
         if self.end is None:
-            cur.execute("SELECT D.description, D.time FROM diary AS D"
+            cur.execute("SELECT D.description, D.time, D.id FROM diary AS D"
                         " INNER JOIN tasks AS T ON D.task=T.id"
                         " WHERE T.name=? AND D.time>=?",
                         (task, start))
         else:
-            cur.execute("SELECT D.description, D.time FROM diary AS D"
+            cur.execute("SELECT D.description, D.time, D.id FROM diary AS D"
                         " INNER JOIN tasks AS T ON D.task=T.id"
                         " WHERE T.name=? AND D.time>=? AND D.time<=?",
                         (task, start, end))
@@ -334,6 +340,7 @@ class TaskLogEntry(object):
         for row in cur:
             item = (datetime.fromtimestamp(row[1]), task, row[0])
             bisect.insort_right(self.diary, item)
+            self._diary_ids.add(int(row[2]))
 
 
     def get_tags(self, logger, cur, task):
@@ -346,12 +353,12 @@ class TaskLogEntry(object):
 
     def get_completed_todos_as_diary(self, logger, cur, task, start, end):
         if self.end is None:
-            cur.execute("SELECT O.description, O.done FROM todos AS O"
+            cur.execute("SELECT O.description, O.done, O.id FROM todos AS O"
                         " INNER JOIN tasks AS T ON O.task=T.id"
                         " WHERE T.name=? AND O.done>=? AND O.done>0",
                         (task, start))
         else:
-            cur.execute("SELECT O.description, O.done FROM todos AS O"
+            cur.execute("SELECT O.description, O.done, O.id FROM todos AS O"
                         " INNER JOIN tasks AS T ON O.task=T.id"
                         " WHERE T.name=? AND O.done>=? AND O.done<=?"
                         " AND O.done>0",
@@ -362,6 +369,32 @@ class TaskLogEntry(object):
         for row in cur:
             item = (datetime.fromtimestamp(row[1]), task, "[DONE] " + row[0])
             bisect.insort_right(self.diary, item)
+            self._todo_ids.add(int(row[2]))
+
+
+    def delete(self):
+        """Permanently delete this entry."""
+
+        cur = self.db.conn.cursor()
+        cur.execute("DELETE FROM tasklog WHERE id=?", (self.entry_id,))
+        self.mutable_times = False
+        if cur.rowcount < 1:
+            raise TimeTrackError("no such entry")
+
+        # We explicitly don't copy ids here because as we delete IDs from the
+        # DB, it's correct to also remove them from our set. The code is a
+        # little fiddly to account for the fact that SQLite limits the number
+        # of variables to 999, so we have to remove them in blocks that big.
+        def delete_helper(table, ids):
+            while ids:
+                removals = []
+                while ids and len(removals) < MAX_SQLITE_VARS:
+                    removals.append(ids.pop())
+                cur.execute("DELETE FROM " + table + " WHERE id IN (%s)" %
+                            (",".join("?" * len(removals)),), removals)
+
+        delete_helper("diary", self._diary_ids)
+        delete_helper("todos", self._todo_ids)
 
 
 
@@ -385,7 +418,6 @@ class LastSeenUpdater(object):
         """Updates last_seen time in info table."""
 
         self.info["lastseen_time"] = datetime.now()
-
 
 
 
@@ -828,6 +860,10 @@ class TimeTrackDB(object):
         end = time.mktime(end.timetuple()) if end is not None else None
         tags = set(tags) if tags is not None else None
         tasks = set(tasks) if tasks is not None else None
+
+        # Check start and end are correctly oriented, if both specified.
+        if start is not None and end is not None and end < start:
+            raise TimeTrackError("end time occurs before start")
 
         # Create database cursor for multiple queries below.
         cur = self.conn.cursor()

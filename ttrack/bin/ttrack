@@ -45,6 +45,16 @@ class ApplicationError(Exception):
     pass
 
 
+def line_input(prompt):
+    """Input a single line string without leaving it in history."""
+
+    old_hist_len = readline.get_current_history_length()
+    line = raw_input(prompt)
+    for i in xrange(readline.get_current_history_length(), old_hist_len, -1):
+        readline.remove_history_item(i - 1)
+    return line
+
+
 def multiline_input(prompt):
     """Input multi-line strings without leaving them in history."""
 
@@ -82,9 +92,18 @@ def format_duration_since_datetime(dt):
 
 def format_date(d):
     now = datetime.date.today()
-    if now.year == d.year:
+    if d == now:
+        return "today"
+    elif d == now - datetime.timedelta(1):
+        return "yesterday"
+    elif d == now + datetime.timedelta(1):
+        return "tomorrow"
+    elif now.year == d.year:
         if now.isocalendar()[1] == d.isocalendar()[1]:
-            return d.strftime("%a %d")
+            if d < now:
+                return d.strftime("last %a")
+            else:
+                return d.strftime("this %a")
         else:
             return d.strftime("%a %b %d")
     else:
@@ -103,6 +122,19 @@ def format_datetime(dt):
             return dt.strftime("%a %b %d %H:%M")
     else:
         return dt.strftime("%a %b %d %H:%M %Y")
+
+
+def format_period(start, end):
+    if end == start:
+        period_name = format_date(start)
+        if period_name not in ("today", "yesterday"):
+            period_name = "on %s" % (period_name,)
+    elif start == datetime.date(1970, 1, 1):
+        period_name = "on or before %s" % (format_date(end),)
+    else:
+        period_name = ("between %s and %s (inclusive)" %
+                       (format_date(start), format_date(end)))
+    return period_name
 
 
 
@@ -380,22 +412,79 @@ class CommandHandler(cmd.Cmd):
 
     @cmdparser.CmdMethodDecorator(token_factory=cmd_token_factory)
     def do_delete(self, args, fields):
-        """delete (task <task>|tag <tag>)
+        """delete (task <task>|tag <tag>|all) [entries [<period>]]
 
-        Delete existing tag or task.
+        Delete existing tag or task, or just log entries for them.
 
-        WARNING: Deleting a tag will remove it from all tasks. Deleting a
-                 task will also remove associated diary, todo and log entries.
-                 DELETION OF ALL ITEMS IS PERMANENT - THERE IS NO UNDO!
+        If the optional 'entries' argument is supplied, all log entries for
+        the specified task or tag are deleted, otherwise the task or tag
+        itself is removed. If a tag is removed it will be removed from all
+        tasks as well. If a task is removed, all associated diary, todo and
+        log entries will also be removed.
+
+        Specifying 'delete entries all' will remove all log entries for all
+        tasks. Specifying 'delete all' will remove everything and reset the
+        database to a clean state.
+
+        WARNING: DELETION OF ALL ITEMS IS PERMANENT - THERE IS NO UNDO!
         """
 
         try:
-            if args[1] == "task":
-                self.db.tasks.discard(fields["<task>"][0])
-                print "Deleted task '%s'" % (fields["<task>"][0],)
-            elif "tag" in fields:
-                self.db.tags.discard(fields["<tag>"][0])
-                print "Deleted tag '%s'" % (fields["<tag>"][0],)
+            # Print a summary message showing what's about to happen.
+            message = "About to delete "
+            if "all" in fields:
+                if "entries" in fields:
+                    message += "all log entries for all tasks"
+                else:
+                    message += "all tasks, tags and everything else"
+            else:
+                if "entries" in fields:
+                    message += "all log entries for "
+                if "task" in fields:
+                    message += "task " + fields["<task>"][0]
+                elif "tag" in fields:
+                    message += "tag " + fields["<tag>"][0]
+            start = end = None
+            if "entries" in fields and "<period>" in fields:
+                start, exclusive_end = fields["<period>"][0]
+                end = exclusive_end - datetime.timedelta(1)
+                message += " " + format_period(start, end)
+            print message
+            print "WARNING: This action is PERMANENT and CANNOT be undone"
+
+            # Confirm with the user they want to go ahead.
+            try:
+                response = line_input("Enter 'yes' to confirm: ")
+                if response.strip().lower() != "yes":
+                    print "Cancelled, nothing has been deleted"
+                    return
+            except KeyboardInterrupt:
+                print "\nCancelled, nothing has been deleted"
+                return
+
+            # Perform the deletion.
+            if "entries" in fields:
+                tag = fields.get("<tag>", None)
+                task = fields.get("<task>", None)
+                kwargs = {"tags": tag, "tasks": task}
+                if start is not None and end is not None:
+                    kwargs.update({"start": start, "end": end})
+                entries_deleted = 0
+                for entry in self.db.get_task_log_entries(**kwargs):
+                    entry.delete()
+                    entries_deleted += 1
+                print "Deleted %d entries" % (entries_deleted,)
+            else:
+                if "task" in fields:
+                    self.db.tasks.discard(fields["<task>"][0])
+                    print "Deleted task '%s'" % (fields["<task>"][0],)
+                elif "tag" in fields:
+                    self.db.tags.discard(fields["<tag>"][0])
+                    print "Deleted tag '%s'" % (fields["<tag>"][0],)
+                elif "all" in fields:
+                    self.db.tags.clear()
+                    self.db.tasks.clear()
+
         except tracklib.TimeTrackError, e:
             self.logger.error("delete error: %s", e)
 
@@ -743,11 +832,7 @@ class CommandHandler(cmd.Cmd):
         try:
             tags_arg = set((filter_tag,)) if filter_tag is not None else None
             inclusive_end = end - datetime.timedelta(1)
-            if inclusive_end == start:
-                period_name = "on %s" % (format_date(start),)
-            else:
-                period_name = "between %s and %s" % (format_date(start),
-                                                     format_date(inclusive_end))
+            period_name = format_period(start, inclusive_end)
             if "entries" in fields:
                 summary_obj = tracklib.SummaryGenerator()
                 entries = self.db.get_task_log_entries(start=start, end=end,

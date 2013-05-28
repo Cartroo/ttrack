@@ -467,6 +467,38 @@ class TestPastCalendarPeriodSubtree(unittest.TestCase):
                                                datetime.date(2012, 6, 6))]})
 
 
+    def test_before(self):
+        tree = datetimeparse.PastCalendarPeriodSubtree("x")
+        fields = {}
+        self.assertEqual(tree.check_match(("before", "1-2-2010"),
+                                          fields=fields), None)
+        self.assertEqual(fields, {"<x>": [(datetime.date(1970, 1, 1),
+                                           datetime.date(2010, 2, 1))]})
+        # 6th June 2012 is a Wednesday
+        with fake_now(2012, 6, 6):
+            fields = {}
+            self.assertEqual(tree.check_match(("before", "today"),
+                                              fields=fields), None)
+            self.assertEqual(fields, {"<x>": [(datetime.date(1970, 1, 1),
+                                               datetime.date(2012, 6, 6))]})
+
+
+    def test_after(self):
+        tree = datetimeparse.PastCalendarPeriodSubtree("x")
+        # 6th June 2012 is a Wednesday
+        with fake_now(2012, 6, 6):
+            fields = {}
+            self.assertEqual(tree.check_match(("after", "1-2-2010"),
+                                              fields=fields), None)
+            self.assertEqual(fields, {"<x>": [(datetime.date(2010, 2, 1),
+                                               datetime.date(2012, 6, 6))]})
+            fields = {}
+            self.assertEqual(tree.check_match(("after", "last", "friday"),
+                                              fields=fields), None)
+            self.assertEqual(fields, {"<x>": [(datetime.date(2012, 6, 1),
+                                               datetime.date(2012, 6, 6))]})
+
+
 
 if __name__ == "__main__":
     unittest.main()

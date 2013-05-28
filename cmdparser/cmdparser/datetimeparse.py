@@ -481,6 +481,9 @@ class PastCalendarPeriodSubtree(cmdparser.Subtree):
     example, if a calendar date is specified any valid date will match).
     Only dates are permitted - times of day will fail to match.
 
+    The form ``before <date>`` will return a start date as 1st January 1970.
+    The form ``after <date>`` will return an end date of today.
+
     The converted value is a 2-tuple ``(start, end)`` of :class:`datetime.date`
     instances, where ``start`` is inclusive and ``end`` is exclusive.
     """
@@ -489,6 +492,7 @@ class PastCalendarPeriodSubtree(cmdparser.Subtree):
               | <n> (day|days|week|weeks|month|months|year|years) <ago>
               | (week|month) (of|with|containing|starting|commencing) <date>
               | <month> [<year>|(last|this) year]
+              | <before> <end> | <after> <start>
               | [between|from] <start> (and|to|until|through|thru) <end> ) """
 
 
@@ -501,7 +505,9 @@ class PastCalendarPeriodSubtree(cmdparser.Subtree):
             return StrptimeToken(token, ("%A", "%a"))
         elif token == "n":
             return cmdparser.IntegerToken(token, min_value=1)
-        elif token == "ago":
+        elif token == "after":
+            return AfterToken(token)
+        elif token in ("ago", "before"):
             return AgoToken(token)
         elif token in ("date", "start", "end"):
             # Don't allow 2-digit years as %d-%m-%y and %y-%m-%d are ambiguous.
@@ -587,5 +593,18 @@ class PastCalendarPeriodSubtree(cmdparser.Subtree):
             return [(start, start.replace(year=start.year + 1))]
 
         # [between|from] <start> (and|to|until|through|thru) <end>
-        return [(fields["<start>"][0], fields["<end>"][0])]
+        if "<start>" in fields and "<end>" in fields:
+            return [(fields["<start>"][0], fields["<end>"][0])]
+
+        # before <end>
+        if "<end>" in fields:
+            return [(datetime.date(1970, 1, 1), fields["<end>"][0])]
+
+        # after <start>
+        if "<start>" in fields:
+            return [(fields["<start>"][0], datetime.date.today())]
+
+        # This indicates a programming error, as the syntax checking should
+        # have caught any syntactically invalid command strings.
+        raise ValueError("unknown period syntax")
 
