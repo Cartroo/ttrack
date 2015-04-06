@@ -379,6 +379,43 @@ class OffsetSubtree(cmdparser.Subtree):
 
 
 
+class DurationSubtree(cmdparser.Subtree):
+    """A subtree matching a period of time.
+
+    This subtree matches any duration, accepting any of the units accepted as
+    part of OffsetSubtree.
+    """
+
+    spec = """(<offset> [,|and]) [...]"""
+
+    @staticmethod
+    def ident_factory(token):
+
+        if token == "offset":
+            return OffsetSubtree(token)
+        return None
+
+
+    def __init__(self, name):
+
+        cmdparser.Subtree.__init__(self, name, self.spec,
+                                   ident_factory=self.ident_factory)
+
+
+    def convert(self, args, fields, context):
+
+        # What we get back from OffsetSubtree is a DateDelta, but actually
+        # we want a raw datetime.timedelta here, so we calculate the number
+        # of days as the integer part of 365/12. This is about the best we
+        # can do as we have no calendar date for reference for a raw duration.
+        delta = DateDelta()
+        for item in fields["<offset>"]:
+            delta += item
+        extra_days = int((delta.months * 365.0) / 12.0)
+        return [(delta.delta + datetime.timedelta(extra_days))]
+
+
+
 class RelativeTimeSubtree(cmdparser.Subtree):
     """A subtree matching a relative time.
 

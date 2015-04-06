@@ -2,6 +2,7 @@
 
 import contextlib
 import datetime
+import itertools
 import time
 import unittest
 
@@ -316,6 +317,94 @@ class TestDateTimeSubtree(unittest.TestCase):
                 fields=fields), None)
         self.assertEqual(fields, {"<x>": [datetime.datetime(2012, 6, 5,
                                                             12, 59, 15)]})
+
+
+class TestDurationSubtree(unittest.TestCase):
+
+    longMessage = True
+
+    _units = (("second", 0, 0, 1), ("minute", 0, 0, 60), ("hour", 0, 0, 3600),
+              ("day", 0, 1, 0), ("week", 0, 7, 0), ("month", 1, 0, 0),
+              ("year", 12, 0, 0))
+
+
+    def test_simple_units(self):
+        tree = datetimeparse.DurationSubtree("x")
+        # For the purposes of DurationSubtree, a month is 365/12 days, but the
+        # result is an integer number of days.
+        for unit, months, days, secs in self._units:
+            for n in xrange(1, 100):
+                units = unit if n == 1 else unit + "s"
+                fields = {}
+                self.assertEqual(tree.check_match((str(n), units), fields=fields),
+                                 None)
+                n_days = n * days + int((n * months * 365.0) / 12.0)
+                self.assertEqual(fields,
+                                 {"<x>": [datetime.timedelta(n_days, n * secs)]},
+                                 "for %d %s" % (n, units))
+
+
+    def test_two_compound_units(self):
+        tree = datetimeparse.DurationSubtree("x")
+        # For the purposes of DurationSubtree, a month is 365/12 days, but the
+        # result is an integer number of days.
+        i = itertools.product(self._units, xrange(1, 15), repeat=2)
+        for (unit1, months1, days1, secs1), n1, (unit2, months2, days2, secs2), n2 in i:
+            units1 = unit1 if n1 == 1 else unit1 + "s"
+            units2 = unit2 if n2 == 1 else unit2 + "s"
+            n_days = (n1 * days1 + n2 * days2 +
+                      int(((n1 * months1 + n2 * months2) * 365.0) / 12.0))
+            delta = datetime.timedelta(n_days, n1 * secs1 + n2 * secs2)
+
+            phrase = (str(n1), units1, "and", str(n2), units2)
+            fields = {}
+            self.assertEqual(tree.check_match(phrase, fields=fields), None)
+            self.assertEqual(fields, {"<x>": [delta]}, "for %r" % (phrase,))
+
+            phrase = (str(n1), units1 + ",", str(n2), units2)
+            fields = {}
+            self.assertEqual(tree.check_match(phrase, fields=fields), None)
+            self.assertEqual(fields, {"<x>": [delta]}, "for %r" % (phrase,))
+
+            phrase = (str(n1), units1, str(n2), units2)
+            fields = {}
+            self.assertEqual(tree.check_match(phrase, fields=fields), None)
+            self.assertEqual(fields, {"<x>": [delta]}, "for %r" % (phrase,))
+
+
+    def test_three_compound_units(self):
+        tree = datetimeparse.DurationSubtree("x")
+        # For the purposes of DurationSubtree, a month is 365/12 days, but the
+        # result is an integer number of days.
+        i = itertools.product(self._units, xrange(1, 3), repeat=3)
+        for ((unit1, months1, days1, secs1), n1, (unit2, months2, days2, secs2),
+             n2, (unit3, months3, days3, secs3), n3) in i:
+            units1 = unit1 if n1 == 1 else unit1 + "s"
+            units2 = unit2 if n2 == 1 else unit2 + "s"
+            units3 = unit3 if n3 == 1 else unit3 + "s"
+            n_days = (n1 * days1 + n2 * days2 + n3 * days3 +
+                      int(((n1*months1 + n2*months2 + n3*months3) * 365.0) / 12.0))
+            delta = datetime.timedelta(n_days, n1*secs1 + n2*secs2 + n3*secs3)
+
+            phrase = (str(n1), units1, "and", str(n2), units2, "and", str(n3), units3)
+            fields = {}
+            self.assertEqual(tree.check_match(phrase, fields=fields), None)
+            self.assertEqual(fields, {"<x>": [delta]}, "for %r" % (phrase,))
+
+            phrase = (str(n1), units1 + ",", str(n2), units2, "and", str(n3), units3)
+            fields = {}
+            self.assertEqual(tree.check_match(phrase, fields=fields), None)
+            self.assertEqual(fields, {"<x>": [delta]}, "for %r" % (phrase,))
+
+            phrase = (str(n1), units1 + ",", str(n2), units2 + ",", str(n3), units3)
+            fields = {}
+            self.assertEqual(tree.check_match(phrase, fields=fields), None)
+            self.assertEqual(fields, {"<x>": [delta]}, "for %r" % (phrase,))
+
+            phrase = (str(n1), units1, str(n2), units2, str(n3), units3)
+            fields = {}
+            self.assertEqual(tree.check_match(phrase, fields=fields), None)
+            self.assertEqual(fields, {"<x>": [delta]}, "for %r" % (phrase,))
 
 
 

@@ -8,7 +8,7 @@ import sqlite3
 import time
 
 
-__version__ = "1.1.1.dev1"
+__version__ = "1.1.1.dev2"
 
 MAX_SQLITE_VARS = 999
 
@@ -157,14 +157,26 @@ def create_tracklib_schema(logger, conn):
     cur = conn.cursor()
     cur.execute("SELECT name FROM sqlite_master WHERE type='table'")
     tables = set(row[0] for row in cur)
+    cur.execute("PRAGMA table_info(tasks)")
+    tasks_columns = set(row[1] for row in cur)
 
     with conn:
 
         # Schema v1 (move to v2 only for incompatible changes).
-        if "tasks" not in tables:
+        if "tasks" in tables:
+            if "estimate" not in tasks_columns:
+                cur.execute("ALTER TABLE tasks ADD COLUMN estimate INTEGER")
+            if "due" not in tasks_columns:
+                cur.execute("ALTER TABLE tasks ADD COLUMN due INTEGER")
+            if "completed" not in tasks_columns:
+                cur.execute("ALTER TABLE tasks ADD COLUMN completed")
+        else:
             cur.execute("CREATE TABLE tasks ("
                         " id INTEGER PRIMARY KEY,"
-                        " name TEXT UNIQUE NOT NULL)")
+                        " name TEXT UNIQUE NOT NULL,"
+                        " estimate INTEGER,"
+                        " due INTEGER,"
+                        " completed INTEGER)")
         if "tags" not in tables:
             cur.execute("CREATE TABLE tags ("
                         " id INTEGER PRIMARY KEY,"
@@ -550,7 +562,7 @@ class TimeTrackDB(object):
             return datetime.fromtimestamp(row[0])
 
 
-    def end_current_task(self, epoch_time=None):
+    def end_current_task(self, epoch_time=None, completed=False):
         """Ends the current task, if any."""
 
         if epoch_time is None:
@@ -561,8 +573,13 @@ class TimeTrackDB(object):
             cur = self.conn.cursor()
             self.info["taskstop_time"] = datetime.fromtimestamp(epoch_time)
             with self.conn:
-                cur.execute("UPDATE tasklog SET end=?"
-                            " WHERE id=?", (epoch_time, task[0]))
+                cur.execute("UPDATE tasklog SET end=? WHERE id=?",
+                            (epoch_time, task[0]))
+                if completed:
+                    cur_task_id = self.tasks.get_id(task[1])
+                    self.info["taskdone_time"] = datetime.fromtimestamp(epoch_time)
+                    cur.execute("UPDATE tasks SET completed=? WHERE id=?",
+                                (epoch_time, cur_task_id))
 
 
     def get_latest_task_end(self):
@@ -577,7 +594,7 @@ class TimeTrackDB(object):
             return datetime.fromtimestamp(float(row[0]))
 
 
-    def start_task(self, task, at_datetime=None):
+    def start_task(self, task, at_datetime=None, completed=False):
         """Starts a new task, ending any current task in the process."""
 
         # Work out the time to use as 'now'.
@@ -612,7 +629,7 @@ class TimeTrackDB(object):
             new_task_id = self.tasks.get_id(task)
 
         # Stop current task.
-        self.end_current_task(epoch_time)
+        self.end_current_task(epoch_time, completed=completed)
 
         # If new task specified, start it.
         if new_task_id is not None:
@@ -624,10 +641,10 @@ class TimeTrackDB(object):
                             (new_task_id, epoch_time))
 
 
-    def stop_task(self, at_datetime=None):
+    def stop_task(self, at_datetime=None, completed=False):
         """Stops the current task."""
 
-        self.start_task(None, at_datetime=at_datetime)
+        self.start_task(None, at_datetime=at_datetime, completed=completed)
 
 
     def get_entry_from_id(self, entry_id):
@@ -754,7 +771,7 @@ class TimeTrackDB(object):
         task_id = self.tasks.get_id(task)
         cur = self.conn.cursor()
         with self.conn:
-            self.info["diaryentry_time"] = datetime.now()
+            self.info["diaryentry_time"] = at_datetime
             cur.execute("INSERT INTO diary (task, description, time)"
                         " VALUES (?, ?, ?)",
                         (task_id, desc, epoch_time))
@@ -807,7 +824,7 @@ class TimeTrackDB(object):
             elif matches > 1:
                 raise TimeTrackError("%d todo matches found for task %s: %s"
                                      % (matches, task, desc))
-            self.info["tododone_time"] = datetime.now()
+            self.info["tododone_time"] = at_datetime
             cur.execute("UPDATE todos SET done=? WHERE task=?"
                         " AND description LIKE ?",
                         (epoch_time, task_id, "%" + desc + "%"))
@@ -927,6 +944,62 @@ class TimeTrackDB(object):
             # we truncate them to the requested range.
             yield TaskLogEntry(self.logger, self, row[0], row[1],
                                start_time, end_time, mutable_times=False)
+
+
+    def set_task_estimate(self, task, time_secs):
+        """Set or clear the estimated time for a task.
+
+        Specifies the time (in seconds) that a task is estimated to take,
+        and sets that in the database replacing any previous estimate. If
+        time_secs is None the estimate is cleared (the default state).
+        """
+
+        task_id = self.tasks.get_id(task)
+        time_secs = int(time_secs) if time_secs is not None else None
+
+        cur = self.conn.cursor()
+        with self.conn:
+            cur.execute("UPDATE tasks SET estimate=? WHERE id=?",
+                        (time_secs, task_id))
+
+
+    def set_task_due(self, task, due_date):
+        """Set or clear the due date/time for a task.
+
+        Specifies the unix epoch time at which a task is due to be completed.
+        If due_date is None the estimate is cleared (the default state).
+        """
+
+        task_id = self.tasks.get_id(task)
+        epoch_time = time.mktime(due_date.timetuple()) if due_date is not None else None
+
+        cur = self.conn.cursor()
+        with self.conn:
+            cur.execute("UPDATE tasks SET due=? WHERE id=?",
+                        (epoch_time, task_id))
+
+
+    def get_task_summary(self, task):
+        """Returns task time estimates and due dates.
+
+        Return type is a tuple of (estimate, spent, due, completed) where
+        estimate and spent are an integer number of seconds, and due and
+        completed are datetimes. Any value except spent may also be None.
+        """
+
+        task_id = self.tasks.get_id(task)
+        cur = self.conn.cursor()
+        cur.execute("SELECT estimate, due, completed FROM tasks WHERE id=?",
+                    (task_id,))
+        estimate, due, completed = cur.fetchone()
+
+        summary_obj = TaskSummaryGenerator()
+        summary_obj.read_entries(self.get_task_log_entries(tasks=(task,)))
+        spent = summary_obj.total_time[task]
+
+        due = None if due is None else datetime.fromtimestamp(due)
+        completed = None if completed is None else datetime.fromtimestamp(completed)
+        return (estimate, spent, due, completed)
 
 
 

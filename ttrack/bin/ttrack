@@ -3,6 +3,7 @@
 import atexit
 import cmd
 import datetime
+import itertools
 import logging
 import operator
 import optparse
@@ -72,16 +73,25 @@ def multiline_input(prompt):
 
 
 def format_duration(secs):
+    phrase = ""
+    if secs < 0:
+        phrase = "overdue: "
+        secs = -secs
     if secs < 60:
-        return "%d sec%s" % (secs, "" if secs == 1 else "s")
+        phrase += "%d sec%s" % (secs, "" if secs == 1 else "s")
     elif secs < 3600:
-        return "%d min%s" % (secs // 60, "" if (secs//60)==1 else "s")
+        phrase += "%d min%s" % (secs // 60, "" if (secs//60)==1 else "s")
+    elif secs < 86400:
+        phrase += ("%d hour%s %d min%s" % (secs // 3600,
+                                           "" if (secs//3600)==1 else "s",
+                                           (secs // 60) % 60,
+                                           "" if ((secs//60)%60)==1 else "s"))
     else:
-        return ("%d hour%s %d min%s" % (secs // 3600,
-                                        "" if (secs//3600)==1 else "s",
-                                        (secs // 60) % 60,
-                                        "" if ((secs//60)%60)==1 else "s"))
-
+        phrase += ("%d day%s %d hour%s" % (secs // 86400,
+                                           "" if (secs//86400)==1 else "s",
+                                           (secs // 3600) % 24,
+                                           "" if ((secs//3600)%24)==1 else "s"))
+    return phrase
 
 
 def format_duration_since_datetime(dt):
@@ -298,6 +308,8 @@ def cmd_token_factory(token_name):
         return datetimeparse.PastCalendarPeriodSubtree("period")
     elif token_name == "time":
         return TTrackTimeSubtree("time")
+    elif token_name == "duration":
+        return datetimeparse.DurationSubtree("duration")
     else:
         return None
 
@@ -617,13 +629,16 @@ class CommandHandler(cmd.Cmd):
     def do_show(self, args, fields):
         """
         show ( [unused] ( tasks [<tag>] | tags )
-             | ( todos | diary ) [ task <task> | tag <tag> ] )
+             | ( todos | diary ) [ task <task> | tag <tag> ]
+             | ( pending | completed ) [ <tag> ] )
 
         Display available tasks or tags, or show diary entries or todo items.
 
-        This command has two forms, one of which lists tasks or tags, and one
+        This command has three forms, one of which lists tasks or tags; one
         of which shows todo items or diary entries for either all tasks or
-        for a specified task or tag.
+        for a specified task or tag; and one of which shows either the
+        completed or pending (uncompleted) tasks remaining, optionally
+        filtered by a specific tag.
 
         In the first form, the optional 'unused' keyword shows only tasks
         which haven't been active in the past five weeks or tags which have
@@ -677,32 +692,72 @@ class CommandHandler(cmd.Cmd):
                 task = fields.get("<task>", [None])[0]
                 tag = fields.get("<tag>", [None])[0]
                 if task is not None:
-                    print "Outstanding todos for task " + task
+                    print "Outstanding todos for task " + task + ":"
                 elif tag is not None:
-                    print "Outstanding todos for tag " + tag
+                    print "Outstanding todos for tag " + tag + ":"
                 else:
-                    print "All outstanding todos"
+                    print "All outstanding todos:"
                 entries = self.db.get_pending_todos(tag=tag, task=task)
                 display_diary({None: entries})
 
-            else:
+            elif "diary" in fields:
                 # Calculate cutoff start time as 4 weeks ago, rounded to a day.
                 start = datetime.datetime.now() - datetime.timedelta(7 * 4)
                 start = start.replace(microsecond=0, second=0, minute=0, hour=0)
                 if "<task>" in fields:
-                    print "Diary entries for task " + fields["<task>"][0]
+                    print "Diary entries for task " + fields["<task>"][0] + ":"
                     entry_gen = self.db.get_task_log_entries(
                             tasks=(fields["<task>"][0],), start=start)
                 elif "<tag>" in fields:
-                    print "Diary entries for tag " + fields["<tag>"][0]
+                    print "Diary entries for tag " + fields["<tag>"][0] + ":"
                     entry_gen = self.db.get_task_log_entries(
                             tags=(fields["<tag>"][0],), start=start)
                 else:
-                    print "All diary entries"
+                    print "All diary entries:"
                     entry_gen = self.db.get_task_log_entries(start=start)
                 summary_obj = tracklib.TaskSummaryGenerator()
                 summary_obj.read_entries(entry_gen, merge_diaries=True)
                 display_diary(summary_obj.diary_entries)
+
+            else:
+                prefix = "Pending" if "pending" in fields else "Completed"
+                suffix = ""
+                if "<tag>" in fields:
+                    suffix = " with tag '%s'" % (fields["<tag>"][0],)
+                print "%s tasks%s:" % (prefix, suffix)
+                rows = []
+                for task in self.db.tasks:
+                    tags = self.db.get_task_tags(task)
+                    if "<tag>" in fields and fields["<tag>"][0] not in tags:
+                        continue
+                    summary = self.db.get_task_summary(task)
+                    row = ["  " + task]
+                    if (("pending" in fields and summary[3] is None) or
+                        ("completed" in fields and summary[3] is not None)):
+                        if summary[0] is None:
+                            row.append(" estimate: none")
+                        else:
+                            row.append(" estimate: %s [%s]" %
+                                       (format_duration(summary[0]),
+                                        format_duration(summary[0] - summary[1])))
+                        if summary[2] is None:
+                            row.append("      due: none")
+                        else:
+                            now = summary[3]
+                            now = datetime.datetime.now() if now is None else now
+                            delta = summary[2] - now
+                            delta_secs = delta.days*86400 + delta.seconds
+                            row.append("      due: %s [%s]" %
+                                       (format_datetime(summary[2]),
+                                        format_duration(delta_secs)))
+                        if summary[3] is not None:
+                            row.append("completed: " + format_datetime(summary[3]))
+                        rows.append(row)
+                for row in sorted(rows):
+                    first = True
+                    for item in row[1:]:
+                        print (row[0] if first else " "*len(row[0])) + "  " + item
+                        first = False
 
         except tracklib.TimeTrackError, e:
             self.logger.error("show error: %s", e)
@@ -769,7 +824,7 @@ class CommandHandler(cmd.Cmd):
 
     @cmdparser.CmdMethodDecorator(token_factory=cmd_token_factory)
     def do_stop(self, args, fields):
-        """stop [<time>]
+        """stop [complete] [<time>]
 
         Stops timer on current task.
 
@@ -780,11 +835,12 @@ class CommandHandler(cmd.Cmd):
         """
 
         try:
+            complete = True if "complete" in fields else False
             task = self.db.get_current_task()
             dt = fields.get("<time>", [None])[0]
             at_str = "" if dt is None else " at %s" % (format_datetime(dt),)
             print "Stopping task '%s'%s" % (task, at_str)
-            self.db.stop_task(at_datetime=dt)
+            self.db.stop_task(at_datetime=dt, completed=complete)
         except tracklib.TimeTrackError, e:
             self.logger.error("stop error: %s", e)
 
@@ -871,13 +927,15 @@ class CommandHandler(cmd.Cmd):
 
     @cmdparser.CmdMethodDecorator(token_factory=cmd_token_factory)
     def do_task(self, args, fields):
-        """task ( <task> | current ) ( tag | untag ) <tag>
+        """task ( <task> | current ) ( ( tag | untag ) <tag>
+                                     | estimate ( none | <duration> )
+                                     | due ( none | <time> ) )
 
-        Adds or removes a tag from the specified task.
+        Adds or removes a tag from the specified task; sets a completion
+        estimate; or specifies the time at which a task is due.
         """
 
-        # Work out tag and task names.
-        tag = fields["<tag>"][0]
+        # Work out task name.
         if "current" in fields:
             task = self.db.get_current_task()
             if task is None:
@@ -886,13 +944,27 @@ class CommandHandler(cmd.Cmd):
         else:
             task = fields["<task>"][0]
 
+        # Process tag/untag options.
         try:
-            if "tag" in fields:
-                self.db.add_task_tag(task, tag)
-                print "Added tag '%s' to '%s'" % (tag, task)
-            else:
-                self.db.remove_task_tag(task, tag)
-                print "Removed tag '%s' from '%s'" % (tag, task)
+            if "tag" in fields or "untag" in fields:
+                tag = fields["<tag>"][0]
+                if "tag" in fields:
+                    self.db.add_task_tag(task, tag)
+                    print "Added tag '%s' to '%s'" % (tag, task)
+                else:
+                    self.db.remove_task_tag(task, tag)
+                    print "Removed tag '%s' from '%s'" % (tag, task)
+            elif "estimate" in fields:
+                if "none" in fields:
+                    self.db.set_task_estimate(task, None)
+                else:
+                    delta = fields["<duration>"][0]
+                    self.db.set_task_estimate(task, delta.days*86400 + delta.seconds)
+            elif "due" in fields:
+                if "none" in fields:
+                    self.db.set_task_due(task, None)
+                else:
+                    self.db.set_task_due(task, fields["<time>"][0])
         except KeyError, e:
             self.logger.error("no such tag/task (%s)", e)
         except tracklib.TimeTrackError, e:

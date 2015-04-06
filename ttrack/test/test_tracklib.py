@@ -613,6 +613,134 @@ class TestTimeTrackDB(unittest.TestCase):
         self.assertAlmostEqual(entries[1][2], 0)
 
 
+    def test_set_task_due(self):
+        # Add new task and check due date is None.
+        self.db.tasks.add("task1")
+        task1_id = self.db.tasks.get_id("task1")
+
+        # Check new task has no due date.
+        cur = self.db.conn.cursor()
+        cur.execute("SELECT id, due FROM tasks")
+        entries = list(cur)
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0][0], task1_id)
+        self.assertIsNone(entries[0][1])
+
+        # Set a due date.
+        due_date = datetime.datetime(2011, 1, 2, 3, 4, 5)
+        self.db.set_task_due("task1", due_date)
+
+        # Check new task is listed with correct due date.
+        cur.execute("SELECT id, due FROM tasks")
+        entries = list(cur)
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0][0], task1_id)
+        self.assertEqual(entries[0][1], time.mktime(due_date.timetuple()))
+
+        # Clear the due date.
+        self.db.set_task_due("task1", None)
+
+        # Check new task has no due date.
+        cur.execute("SELECT id, due FROM tasks")
+        entries = list(cur)
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0][0], task1_id)
+        self.assertIsNone(entries[0][1])
+
+
+    def test_set_task_estimate(self):
+        # Add new task and check estimate is None.
+        self.db.tasks.add("task1")
+        task1_id = self.db.tasks.get_id("task1")
+
+        # Check new task has no estimate.
+        cur = self.db.conn.cursor()
+        cur.execute("SELECT id, estimate FROM tasks")
+        entries = list(cur)
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0][0], task1_id)
+        self.assertIsNone(entries[0][1])
+
+        # Set an estimate.
+        self.db.set_task_estimate("task1", 1234)
+
+        # Check new task has the correct estimate.
+        cur.execute("SELECT id, estimate FROM tasks")
+        entries = list(cur)
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0][0], task1_id)
+        self.assertEqual(entries[0][1], 1234)
+
+        # Clear the estimate.
+        self.db.set_task_estimate("task1", None)
+
+        # Check new task has no estimate.
+        cur.execute("SELECT id, estimate FROM tasks")
+        entries = list(cur)
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0][0], task1_id)
+        self.assertIsNone(entries[0][1])
+
+
+    def test_set_task_completed_stop(self):
+        # Add new tasks and check they are not completed.
+        self.db.tasks.add("task1")
+        self.db.tasks.add("task2")
+        task1_id = self.db.tasks.get_id("task1")
+        task2_id = self.db.tasks.get_id("task2")
+
+        cur = self.db.conn.cursor()
+        cur.execute("SELECT id, completed FROM tasks")
+        entries = list(cur)
+        self.assertEqual(len(entries), 2)
+        for entry in entries:
+            self.assertIn(entry[0], (task1_id, task2_id))
+            self.assertIsNone(entry[1])
+
+        # Start task, then stop it and check it is not completed.
+        self.db.start_task("task1")
+        self.db.stop_task()
+        cur.execute("SELECT completed FROM tasks WHERE id=?", (task1_id,))
+        entries = list(cur)
+        self.assertEqual(len(entries), 1)
+        self.assertIsNone(entries[0][0])
+
+        # Now complete it and check it is completed.
+        self.db.start_task("task1")
+        self.db.stop_task(completed=True)
+        complete_time = int(time.time())
+        cur.execute("SELECT completed FROM tasks WHERE id=?", (task1_id,))
+        entries = list(cur)
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0][0], complete_time)
+
+
+    def test_set_task_completed_start(self):
+        # Add new tasks and check they are not completed.
+        self.db.tasks.add("task1")
+        self.db.tasks.add("task2")
+        task1_id = self.db.tasks.get_id("task1")
+        task2_id = self.db.tasks.get_id("task2")
+
+        # Start task, then start another and check it is not completed.
+        self.db.start_task("task1")
+        self.db.start_task("task2")
+        cur = self.db.conn.cursor()
+        cur.execute("SELECT completed FROM tasks WHERE id=?", (task1_id,))
+        entries = list(cur)
+        self.assertEqual(len(entries), 1)
+        self.assertIsNone(entries[0][0])
+
+        # Now mark task1 completed when starting task2.
+        self.db.start_task("task1")
+        self.db.start_task("task2", completed=True)
+        complete_time = int(time.time())
+        cur.execute("SELECT completed FROM tasks WHERE id=?", (task1_id,))
+        entries = list(cur)
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0][0], complete_time)
+
+
     def _get_ts(self, day, hour, minute, second):
         return time.mktime(datetime.datetime(2011, 1, day, hour, minute,
                                              second).timetuple())
@@ -631,29 +759,6 @@ class TestTimeTrackDB(unittest.TestCase):
         # task6: tag2 tag4
         # task7: tag1 tag2 tag4
 
-        cur.execute("INSERT INTO tasks (id, name) VALUES (1, 'task1')")
-        cur.execute("INSERT INTO tasks (id, name) VALUES (2, 'task2')")
-        cur.execute("INSERT INTO tasks (id, name) VALUES (3, 'task3')")
-        cur.execute("INSERT INTO tasks (id, name) VALUES (4, 'task4')")
-        cur.execute("INSERT INTO tasks (id, name) VALUES (5, 'task5')")
-        cur.execute("INSERT INTO tasks (id, name) VALUES (6, 'task6')")
-        cur.execute("INSERT INTO tasks (id, name) VALUES (7, 'task7')")
-        cur.execute("INSERT INTO tags (id, name) VALUES (1, 'tag1')")
-        cur.execute("INSERT INTO tags (id, name) VALUES (2, 'tag2')")
-        cur.execute("INSERT INTO tags (id, name) VALUES (4, 'tag4')")
-        cur.execute("INSERT INTO tagmappings (task, tag) VALUES (1, 1)")
-        cur.execute("INSERT INTO tagmappings (task, tag) VALUES (2, 2)")
-        cur.execute("INSERT INTO tagmappings (task, tag) VALUES (3, 1)")
-        cur.execute("INSERT INTO tagmappings (task, tag) VALUES (3, 2)")
-        cur.execute("INSERT INTO tagmappings (task, tag) VALUES (4, 4)")
-        cur.execute("INSERT INTO tagmappings (task, tag) VALUES (5, 1)")
-        cur.execute("INSERT INTO tagmappings (task, tag) VALUES (5, 4)")
-        cur.execute("INSERT INTO tagmappings (task, tag) VALUES (6, 2)")
-        cur.execute("INSERT INTO tagmappings (task, tag) VALUES (6, 4)")
-        cur.execute("INSERT INTO tagmappings (task, tag) VALUES (7, 1)")
-        cur.execute("INSERT INTO tagmappings (task, tag) VALUES (7, 2)")
-        cur.execute("INSERT INTO tagmappings (task, tag) VALUES (7, 4)")
-
         # Sequence of events on test tasks:
         #
         # evA: 2011-01-01 10:00:00 - START task1    [00h 30m]
@@ -669,11 +774,14 @@ class TestTimeTrackDB(unittest.TestCase):
         # evG: 2011-01-01 16:00:00 - STOP task1
         # evH: 2011-01-02 10:00:00 - START task3    [24h 00m]
         # evHa:2011-01-02 10:15:00 - DONE 'Todo for task3'
+        # evHb:2011-01-02 11:00:00 - <<Due date for task3>>
         # evI: 2011-01-02 12:00:00 - DIARY four
         # evJ: 2011-01-03 10:00:00 - START task4    [01h 00m]
         # evK: 2011-01-03 11:00:00 - START task5    [01h 00m]
         # evL: 2011-01-03 12:00:00 - START task6    [01h 00m]
         # evM: 2011-01-03 13:00:00 - START task7    [inf.   ]
+        # evMa:2011-01-04 12:00:00 - <<Due date for task4>>
+        # evMb:2011-01-10 12:00:00 - <<Due date for task6>>
         # (task7 is left running as the current task)
 
         evA, evB = (self._get_ts(1, 10, 0, 0), self._get_ts(1, 10, 30, 0))
@@ -683,10 +791,40 @@ class TestTimeTrackDB(unittest.TestCase):
         evCa = self._get_ts(1, 10, 35, 5)
         evE, evF = (self._get_ts(1, 13, 0, 0), self._get_ts(1, 13, 30, 0))
         evG, evH = (self._get_ts(1, 16, 0, 0), self._get_ts(2, 10, 0, 0))
-        evHa = self._get_ts(2, 10, 15, 0)
+        evHa, evHb = (self._get_ts(2, 10, 15, 0), self._get_ts(2, 11, 0, 0))
         evI, evJ = (self._get_ts(2, 12, 0, 0), self._get_ts(3, 10, 0, 0))
         evK, evL = (self._get_ts(3, 11, 0, 0), self._get_ts(3, 12, 0, 0))
         evM = self._get_ts(3, 13, 0, 0)
+        evMa, evMb = (self._get_ts(4, 12, 0, 0), self._get_ts(10, 12, 0, 0))
+
+        cur.execute("INSERT INTO tasks (id, name) VALUES (1, 'task1')")
+        cur.execute("INSERT INTO tasks (id, name, completed) VALUES"
+                    " (2, 'task2', ?)", (evD,))
+        cur.execute("INSERT INTO tasks (id, name, estimate, due, completed)"
+                    " VALUES (3, 'task3', 80000, ?, ?)", (evHb, evJ))
+        cur.execute("INSERT INTO tasks (id, name, due, completed)"
+                    " VALUES (4, 'task4', ?, ?)", (evMa, evK))
+        cur.execute("INSERT INTO tasks (id, name, estimate)"
+                    " VALUES (5, 'task5', 4000)")
+        cur.execute("INSERT INTO tasks (id, name, due)"
+                    " VALUES (6, 'task6', ?)", (evMb,))
+        cur.execute("INSERT INTO tasks (id, name) VALUES (7, 'task7')")
+
+        cur.execute("INSERT INTO tags (id, name) VALUES (1, 'tag1')")
+        cur.execute("INSERT INTO tags (id, name) VALUES (2, 'tag2')")
+        cur.execute("INSERT INTO tags (id, name) VALUES (4, 'tag4')")
+        cur.execute("INSERT INTO tagmappings (task, tag) VALUES (1, 1)")
+        cur.execute("INSERT INTO tagmappings (task, tag) VALUES (2, 2)")
+        cur.execute("INSERT INTO tagmappings (task, tag) VALUES (3, 1)")
+        cur.execute("INSERT INTO tagmappings (task, tag) VALUES (3, 2)")
+        cur.execute("INSERT INTO tagmappings (task, tag) VALUES (4, 4)")
+        cur.execute("INSERT INTO tagmappings (task, tag) VALUES (5, 1)")
+        cur.execute("INSERT INTO tagmappings (task, tag) VALUES (5, 4)")
+        cur.execute("INSERT INTO tagmappings (task, tag) VALUES (6, 2)")
+        cur.execute("INSERT INTO tagmappings (task, tag) VALUES (6, 4)")
+        cur.execute("INSERT INTO tagmappings (task, tag) VALUES (7, 1)")
+        cur.execute("INSERT INTO tagmappings (task, tag) VALUES (7, 2)")
+        cur.execute("INSERT INTO tagmappings (task, tag) VALUES (7, 4)")
 
         # Insert tasklog entries.
         cur.execute("INSERT INTO tasklog (task, start, end) VALUES"
@@ -1115,6 +1253,57 @@ class TestTimeTrackDB(unittest.TestCase):
                          datetime.datetime(2011, 1, 3, 13, 0, 0))
         self.assertEqual(len(entries[2].diary), 0)
 
+
+    def test_task_summary(self):
+        self._create_sample_task_logs()
+
+        estimate, spent, due, completed = self.db.get_task_summary('task1')
+        self.assertIsNone(estimate)
+        self.assertEqual(spent, 4*3600 + 30*60)
+        self.assertIsNone(due)
+        self.assertIsNone(completed)
+
+        estimate, spent, due, completed = self.db.get_task_summary('task2')
+        self.assertIsNone(estimate)
+        self.assertEqual(spent, 3600 + 1800)
+        self.assertIsNone(due)
+        self.assertEqual(completed,
+                         datetime.datetime(2011, 1, 1, 12, 0, 0))
+
+        estimate, spent, due, completed = self.db.get_task_summary('task3')
+        self.assertEqual(estimate, 80000)
+        self.assertEqual(spent, 24*3600)
+        self.assertEqual(due,
+                         datetime.datetime(2011, 1, 2, 11, 0, 0))
+        self.assertEqual(completed,
+                         datetime.datetime(2011, 1, 3, 10, 0, 0))
+
+        estimate, spent, due, completed = self.db.get_task_summary('task4')
+        self.assertIsNone(estimate)
+        self.assertEqual(spent, 3600)
+        self.assertEqual(due,
+                         datetime.datetime(2011, 1, 4, 12, 0 ,0))
+        self.assertEqual(completed,
+                         datetime.datetime(2011, 1, 3, 11, 0, 0))
+
+        estimate, spent, due, completed = self.db.get_task_summary('task5')
+        self.assertEqual(estimate, 4000)
+        self.assertEqual(spent, 3600)
+        self.assertIsNone(due)
+        self.assertIsNone(completed)
+
+        estimate, spent, due, completed = self.db.get_task_summary('task6')
+        self.assertIsNone(estimate)
+        self.assertEqual(spent, 3600)
+        self.assertEqual(due,
+                         datetime.datetime(2011, 1, 10, 12, 0, 0))
+        self.assertIsNone(completed)
+
+        estimate, spent, due, completed = self.db.get_task_summary('task7')
+        self.assertIsNone(estimate)
+        self.assertGreater(spent, 10**6)
+        self.assertIsNone(due)
+        self.assertIsNone(completed)
 
 
 if __name__ == "__main__":
